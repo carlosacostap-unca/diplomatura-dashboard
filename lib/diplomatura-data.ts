@@ -63,9 +63,39 @@ const csvSources: CsvSource[] = [
 ];
 
 const dataDirectory = path.join(process.cwd(), "data", "graduados");
+const graduationsCollection = "student_module_graduations";
 
-export function getDashboardData(): DashboardData {
-  const records = csvSources.flatMap((source) => readSource(source));
+type PocketBaseStudentRecord = {
+  id: string;
+  dni: string;
+  lastName: string;
+  firstName: string;
+  fullName: string;
+  birthDate: string;
+  gender: string;
+  phone: string;
+  email: string;
+};
+
+type PocketBaseModuleRecord = {
+  id: string;
+  number: number;
+  name: string;
+  shortName: string;
+};
+
+type PocketBaseGraduationRecord = {
+  id: string;
+  cohort: number;
+  sourceFile: string;
+  expand?: {
+    student?: PocketBaseStudentRecord;
+    module?: PocketBaseModuleRecord;
+  };
+};
+
+export async function getDashboardData(): Promise<DashboardData> {
+  const records = await readPocketBaseRecords().catch(() => readCsvRecords());
   const moduleSummaries = buildModuleSummaries(records);
 
   return {
@@ -74,6 +104,75 @@ export function getDashboardData(): DashboardData {
     records,
     moduleSummaries,
   };
+}
+
+function readCsvRecords(): GraduateRecord[] {
+  const records = csvSources.flatMap((source) => readSource(source));
+
+  return records;
+}
+
+async function readPocketBaseRecords(): Promise<GraduateRecord[]> {
+  const pocketBaseUrl = process.env.NEXT_PUBLIC_POCKETBASE_URL?.replace(
+    /\/$/,
+    "",
+  );
+
+  if (!pocketBaseUrl) {
+    throw new Error("Missing NEXT_PUBLIC_POCKETBASE_URL");
+  }
+
+  const records: GraduateRecord[] = [];
+  let page = 1;
+  let totalPages = 1;
+
+  while (page <= totalPages) {
+    const response = await fetch(
+      `${pocketBaseUrl}/api/collections/${graduationsCollection}/records?page=${page}&perPage=500&sort=cohort&expand=student,module`,
+      { cache: "no-store" },
+    );
+
+    if (!response.ok) {
+      throw new Error(`PocketBase read failed: ${response.status}`);
+    }
+
+    const payload = (await response.json()) as {
+      items: PocketBaseGraduationRecord[];
+      totalPages: number;
+    };
+
+    records.push(
+      ...payload.items.map((record) => {
+        const student = record.expand?.student;
+        const moduleItem = record.expand?.module;
+
+        if (!student || !moduleItem) {
+          throw new Error("PocketBase relation expand is incomplete");
+        }
+
+        return {
+          id: record.id,
+          cohort: toCohortId(record.cohort),
+          module: toModuleId(moduleItem.number),
+          moduleName: moduleItem.name,
+          lastName: student.lastName,
+          firstName: student.firstName,
+          fullName: student.fullName,
+          dni: student.dni,
+          birthDate: student.birthDate,
+          gender: student.gender,
+          phone: student.phone,
+          email: student.email,
+          sourceFile: record.sourceFile,
+        };
+      }),
+    );
+
+    totalPages = payload.totalPages;
+    page += 1;
+  }
+
+  return records;
 }
 
 function readSource(source: CsvSource): GraduateRecord[] {
@@ -182,4 +281,12 @@ function splitCsvLine(line: string): string[] {
 
 function cleanCell(value = ""): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function toCohortId(value: number): CohortId {
+  return value as CohortId;
+}
+
+function toModuleId(value: number): ModuleId {
+  return value as ModuleId;
 }

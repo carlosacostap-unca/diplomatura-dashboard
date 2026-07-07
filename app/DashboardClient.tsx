@@ -81,20 +81,20 @@ export default function DashboardClient({ data }: DashboardClientProps) {
   }
 
   return (
-    <main className="min-h-screen bg-[#f6f4ee] text-[#1f2933]">
+    <main className="min-h-screen bg-[#0f1115] text-[#f4f1ea]">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
-        <header className="grid gap-6 border-b border-[#d8d1c4] pb-6 lg:grid-cols-[1fr_360px] lg:items-end">
+        <header className="grid gap-6 border-b border-[#2d333b] pb-6 lg:grid-cols-[1fr_360px] lg:items-end">
           <div className="space-y-4">
             <div>
-              <p className="text-sm font-semibold uppercase text-[#287271]">
+              <p className="text-sm font-semibold uppercase text-[#5ee0c1]">
                 Dashboard academico
               </p>
-              <h1 className="mt-2 max-w-4xl text-3xl font-semibold text-[#17202a] sm:text-4xl">
+              <h1 className="mt-2 max-w-4xl text-3xl font-semibold text-[#fbf7ef] sm:text-4xl">
                 Diplomatura universitaria en Desarrollo Web Full Stack con
                 JavaScript
               </h1>
             </div>
-            <p className="max-w-3xl text-base leading-7 text-[#53616f]">
+            <p className="max-w-3xl text-base leading-7 text-[#aab4c0]">
               Seguimiento de egresados por cohorte y modulo a partir de los CSV
               oficiales de aprobacion.
             </p>
@@ -117,11 +117,11 @@ export default function DashboardClient({ data }: DashboardClientProps) {
           <Metric label="Correos unicos" value={selectedSummary.emails} />
         </section>
 
-        <section className="grid gap-4 rounded-lg border border-[#d8d1c4] bg-white p-4 shadow-sm lg:grid-cols-[1.2fr_1fr_1fr_1fr]">
+        <section className="grid gap-4 rounded-lg border border-[#303741] bg-[#181c22] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.22)] lg:grid-cols-[1.2fr_1fr_1fr_1fr]">
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-[#53616f]">Buscar</span>
+            <span className="text-sm font-medium text-[#b7c0cb]">Buscar</span>
             <input
-              className="h-11 rounded-md border border-[#c9d2d0] bg-white px-3 text-sm outline-none transition focus:border-[#287271] focus:ring-2 focus:ring-[#287271]/20"
+              className="h-11 rounded-md border border-[#3b4652] bg-[#10141a] px-3 text-sm text-[#f4f1ea] outline-none transition placeholder:text-[#687382] focus:border-[#5ee0c1] focus:ring-2 focus:ring-[#5ee0c1]/20"
               placeholder="Nombre, DNI, email o telefono"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -162,10 +162,10 @@ export default function DashboardClient({ data }: DashboardClientProps) {
         <section className="grid gap-6 lg:grid-cols-[390px_1fr]">
           <div className="space-y-3">
             <div>
-              <h2 className="text-lg font-semibold text-[#17202a]">
+              <h2 className="text-lg font-semibold text-[#fbf7ef]">
                 Mapa de cargas
               </h2>
-              <p className="text-sm text-[#53616f]">
+              <p className="text-sm text-[#aab4c0]">
                 Selecciona una celda para filtrar el listado.
               </p>
             </div>
@@ -175,7 +175,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
               {data.modules.map((moduleItem) => (
                 <div
                   key={moduleItem.id}
-                  className="flex h-10 items-center justify-center rounded-md bg-[#e7ebe5] px-2 text-center text-xs font-semibold text-[#53616f]"
+                  className="flex h-10 items-center justify-center rounded-md bg-[#20262e] px-2 text-center text-xs font-semibold text-[#b7c0cb]"
                 >
                   M{moduleItem.id}
                 </div>
@@ -194,19 +194,19 @@ export default function DashboardClient({ data }: DashboardClientProps) {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-lg border border-[#d8d1c4] bg-white shadow-sm">
-            <div className="flex flex-col gap-2 border-b border-[#e6e0d5] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="overflow-hidden rounded-lg border border-[#303741] bg-[#181c22] shadow-[0_18px_60px_rgba(0,0,0,0.22)]">
+            <div className="flex flex-col gap-2 border-b border-[#303741] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-[#17202a]">
+                <h2 className="text-lg font-semibold text-[#fbf7ef]">
                   Egresados
                 </h2>
-                <p className="text-sm text-[#53616f]">
+                <p className="text-sm text-[#aab4c0]">
                   {filteredRecords.length} registros visibles
                 </p>
               </div>
               <button
                 type="button"
-                className="h-10 rounded-md border border-[#c9d2d0] px-3 text-sm font-medium text-[#287271] transition hover:bg-[#eef6f5]"
+                className="h-10 rounded-md border border-[#3b4652] px-3 text-sm font-medium text-[#5ee0c1] transition hover:border-[#5ee0c1] hover:bg-[#143c36]"
                 onClick={() => {
                   setSelectedCohort("all");
                   setSelectedModule("all");
@@ -220,7 +220,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
 
             <div className="max-h-[620px] overflow-auto">
               <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                <thead className="sticky top-0 bg-[#f8f6f0] text-xs uppercase text-[#53616f]">
+                <thead className="sticky top-0 bg-[#13171d] text-xs uppercase text-[#b7c0cb]">
                   <tr>
                     <TableHead>Alumno</TableHead>
                     <TableHead>DNI</TableHead>
@@ -230,7 +230,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
                     <TableHead>Trayectoria</TableHead>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#ece6dc]">
+                <tbody className="divide-y divide-[#303741]">
                   {filteredRecords.map((record) => (
                     <GraduateRow
                       key={record.id}
@@ -261,15 +261,15 @@ function Metric({
     <div
       className={
         tone === "strong"
-          ? "rounded-lg border border-[#287271] bg-[#287271] p-4 text-white"
-          : "rounded-lg border border-[#d8d1c4] bg-white p-4 text-[#17202a]"
+          ? "rounded-lg border border-[#5ee0c1] bg-[#1f9d82] p-4 text-[#06110f]"
+          : "rounded-lg border border-[#303741] bg-[#181c22] p-4 text-[#f4f1ea]"
       }
     >
       <p
         className={
           tone === "strong"
-            ? "text-xs font-semibold uppercase text-white/75"
-            : "text-xs font-semibold uppercase text-[#53616f]"
+            ? "text-xs font-semibold uppercase text-[#06110f]/70"
+            : "text-xs font-semibold uppercase text-[#aab4c0]"
         }
       >
         {label}
@@ -292,9 +292,9 @@ function FilterSelect({
 }) {
   return (
     <label className="flex flex-col gap-2">
-      <span className="text-sm font-medium text-[#53616f]">{label}</span>
+      <span className="text-sm font-medium text-[#b7c0cb]">{label}</span>
       <select
-        className="h-11 rounded-md border border-[#c9d2d0] bg-white px-3 text-sm outline-none transition focus:border-[#287271] focus:ring-2 focus:ring-[#287271]/20"
+        className="h-11 rounded-md border border-[#3b4652] bg-[#10141a] px-3 text-sm text-[#f4f1ea] outline-none transition focus:border-[#5ee0c1] focus:ring-2 focus:ring-[#5ee0c1]/20"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
@@ -324,7 +324,7 @@ function CohortRow({
 }) {
   return (
     <>
-      <div className="flex h-16 items-center rounded-md bg-[#e7ebe5] px-2 text-xs font-semibold text-[#53616f]">
+      <div className="flex h-16 items-center rounded-md bg-[#20262e] px-2 text-xs font-semibold text-[#b7c0cb]">
         Cohorte {cohort}
       </div>
       {[1, 2, 3, 4].map((module) => {
@@ -343,10 +343,10 @@ function CohortRow({
               summary
                 ? `flex h-16 flex-col items-center justify-center rounded-md border px-1 text-center transition ${
                     isSelected
-                      ? "border-[#287271] bg-[#287271] text-white"
-                      : "border-[#b7d4cf] bg-[#eef6f5] text-[#1f6868] hover:border-[#287271]"
+                      ? "border-[#5ee0c1] bg-[#1f9d82] text-[#06110f]"
+                      : "border-[#276b60] bg-[#123a36] text-[#9ff0db] hover:border-[#5ee0c1]"
                   }`
-                : "flex h-16 flex-col items-center justify-center rounded-md border border-dashed border-[#d8d1c4] bg-white px-1 text-center text-[#9a8f80]"
+                : "flex h-16 flex-col items-center justify-center rounded-md border border-dashed border-[#3b4652] bg-[#12161c] px-1 text-center text-[#7e8793]"
             }
             onClick={() => onSelect(cohort, moduleId)}
           >
@@ -367,32 +367,32 @@ function GraduateRow({
   approvedModules: number;
 }) {
   return (
-    <tr className="align-top transition hover:bg-[#faf8f3]">
+    <tr className="align-top text-[#dfe5eb] transition hover:bg-[#20262e]">
       <td className="px-4 py-3">
-        <p className="font-semibold text-[#17202a]">
+        <p className="font-semibold text-[#fbf7ef]">
           {record.lastName}, {record.firstName}
         </p>
-        <p className="text-xs text-[#53616f]">{record.gender}</p>
+        <p className="text-xs text-[#aab4c0]">{record.gender}</p>
       </td>
-      <td className="px-4 py-3 font-medium text-[#17202a]">
+      <td className="px-4 py-3 font-medium text-[#fbf7ef]">
         {formatDni(record.dni)}
       </td>
       <td className="px-4 py-3">Cohorte {record.cohort}</td>
       <td className="px-4 py-3">
         <p className="font-medium">Modulo {record.module}</p>
-        <p className="text-xs text-[#53616f]">{record.moduleName}</p>
+        <p className="text-xs text-[#aab4c0]">{record.moduleName}</p>
       </td>
       <td className="px-4 py-3">
         <a
-          className="block font-medium text-[#287271] hover:underline"
+          className="block font-medium text-[#5ee0c1] hover:underline"
           href={`mailto:${record.email}`}
         >
           {record.email}
         </a>
-        <p className="text-xs text-[#53616f]">{record.phone}</p>
+        <p className="text-xs text-[#aab4c0]">{record.phone}</p>
       </td>
       <td className="px-4 py-3">
-        <span className="inline-flex h-8 items-center rounded-full bg-[#e7ebe5] px-3 text-xs font-semibold text-[#53616f]">
+        <span className="inline-flex h-8 items-center rounded-full bg-[#20262e] px-3 text-xs font-semibold text-[#b7c0cb]">
           {approvedModules}/4 modulos
         </span>
       </td>
