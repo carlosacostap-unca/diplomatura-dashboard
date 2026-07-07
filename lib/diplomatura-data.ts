@@ -55,6 +55,11 @@ const csvSources: CsvSource[] = [
     module: 1,
     fileName: "cohorte-1-modulo-1-diseno-web.csv",
   },
+  {
+    cohort: 1,
+    module: 2,
+    fileName: "cohorte-1-modulo-2-programacion-javascript.csv",
+  },
 ];
 
 const dataDirectory = path.join(process.cwd(), "data", "graduados");
