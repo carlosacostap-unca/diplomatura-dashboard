@@ -60,6 +60,11 @@ const csvSources: CsvSource[] = [
     module: 2,
     fileName: "cohorte-1-modulo-2-programacion-javascript.csv",
   },
+  {
+    cohort: 1,
+    module: 3,
+    fileName: "cohorte-1-modulo-3-backend-node.csv",
+  },
 ];
 
 const dataDirectory = path.join(process.cwd(), "data", "graduados");
@@ -184,7 +189,7 @@ function readSource(source: CsvSource): GraduateRecord[] {
   return parseCsv(csv).map((row, index) => {
     const lastName = cleanCell(row["Apellido/s"]);
     const firstName = cleanCell(row["Nombre/s"]);
-    const dni = cleanCell(row.DNI);
+    const dni = normalizeDni(row.DNI);
 
     return {
       id: `${source.cohort}-${source.module}-${dni || index}`,
@@ -195,10 +200,12 @@ function readSource(source: CsvSource): GraduateRecord[] {
       firstName,
       fullName: `${lastName}, ${firstName}`,
       dni,
-      birthDate: cleanCell(row["Fecha de nacimiento"]),
-      gender: cleanCell(row["Género"]),
-      phone: cleanCell(row["Número de teléfono"]),
-      email: cleanCell(row["E-mail"]).toLowerCase(),
+      birthDate: cleanCell(
+        getCell(row, ["Fecha de nacimiento", "Fecha de Nacimiento"]),
+      ),
+      gender: cleanCell(getCell(row, ["Género"])),
+      phone: cleanCell(getCell(row, ["Número de teléfono", "Teléfono"])),
+      email: cleanCell(getCell(row, ["E-mail", "Correo electrónico"])).toLowerCase(),
       sourceFile: source.fileName,
     };
   });
@@ -281,6 +288,20 @@ function splitCsvLine(line: string): string[] {
 
 function cleanCell(value = ""): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function getCell(row: Record<string, string>, names: string[]): string {
+  for (const name of names) {
+    if (row[name] != null) {
+      return row[name];
+    }
+  }
+
+  return "";
+}
+
+function normalizeDni(value = ""): string {
+  return cleanCell(value).replace(/\D/g, "");
 }
 
 function toCohortId(value: number): CohortId {

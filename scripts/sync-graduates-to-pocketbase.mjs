@@ -19,6 +19,11 @@ const csvSources = [
     module: 2,
     fileName: "cohorte-1-modulo-2-programacion-javascript.csv",
   },
+  {
+    cohort: 1,
+    module: 3,
+    fileName: "cohorte-1-modulo-3-backend-node.csv",
+  },
 ];
 
 const collections = {
@@ -246,7 +251,7 @@ function readCsvRecords() {
     return parseCsv(csv).map((row) => {
       const lastName = cleanCell(row["Apellido/s"]);
       const firstName = cleanCell(row["Nombre/s"]);
-      const dni = cleanCell(row.DNI);
+      const dni = normalizeDni(row.DNI);
 
       return {
         cohort: source.cohort,
@@ -255,10 +260,14 @@ function readCsvRecords() {
         firstName,
         fullName: `${lastName}, ${firstName}`,
         dni,
-        birthDate: cleanCell(row["Fecha de nacimiento"]),
-        gender: cleanCell(row["Género"]),
-        phone: cleanCell(row["Número de teléfono"]),
-        email: cleanCell(row["E-mail"]).toLowerCase(),
+        birthDate: cleanCell(
+          getCell(row, ["Fecha de nacimiento", "Fecha de Nacimiento"]),
+        ),
+        gender: cleanCell(getCell(row, ["Género"])),
+        phone: cleanCell(getCell(row, ["Número de teléfono", "Teléfono"])),
+        email: cleanCell(
+          getCell(row, ["E-mail", "Correo electrónico"]),
+        ).toLowerCase(),
         sourceFile: source.fileName,
       };
     });
@@ -314,7 +323,9 @@ async function syncStudents(pocketBaseUrl, token, sourceRows) {
   }
 
   const existing = await getRecords(pocketBaseUrl, token, collections.students);
-  const existingByDni = new Map(existing.map((record) => [record.dni, record]));
+  const existingByDni = new Map(
+    existing.map((record) => [normalizeDni(record.dni), record]),
+  );
   const summary = createSummary();
 
   for (const student of sourceByDni.values()) {
@@ -322,12 +333,12 @@ async function syncStudents(pocketBaseUrl, token, sourceRows) {
       pocketBaseUrl,
       token,
       collections.students,
-      existingByDni.get(student.dni),
+      existingByDni.get(normalizeDni(student.dni)),
       student,
       summary,
     );
 
-    existingByDni.set(student.dni, saved);
+    existingByDni.set(normalizeDni(student.dni), saved);
   }
 
   return { recordsByDni: existingByDni, summary };
@@ -346,7 +357,7 @@ async function syncGraduations(
     collections.graduations,
   );
   const existingByKey = new Map(
-    existing.map((record) => [record.uniqueKey, record]),
+    existing.map((record) => [normalizeGraduationKey(record.uniqueKey), record]),
   );
   const summary = createSummary();
 
@@ -371,12 +382,12 @@ async function syncGraduations(
       pocketBaseUrl,
       token,
       collections.graduations,
-      existingByKey.get(uniqueKey),
+      existingByKey.get(normalizeGraduationKey(uniqueKey)),
       nextRecord,
       summary,
     );
 
-    existingByKey.set(uniqueKey, saved);
+    existingByKey.set(normalizeGraduationKey(uniqueKey), saved);
   }
 
   return { recordsByKey: existingByKey, summary };
@@ -563,4 +574,24 @@ function splitCsvLine(line) {
 
 function cleanCell(value = "") {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function getCell(row, names) {
+  for (const name of names) {
+    if (row[name] != null) {
+      return row[name];
+    }
+  }
+
+  return "";
+}
+
+function normalizeDni(value = "") {
+  return cleanCell(value).replace(/\D/g, "");
+}
+
+function normalizeGraduationKey(value = "") {
+  const [cohort, module, dni] = String(value).split("-");
+
+  return `${cohort}-${module}-${normalizeDni(dni)}`;
 }
