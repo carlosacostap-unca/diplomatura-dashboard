@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import readXlsxFile from "read-excel-file/node";
 
 const modules = [
   { id: 1, name: "Diseño Web", shortName: "Diseño" },
@@ -8,31 +9,18 @@ const modules = [
   { id: 4, name: "Desarrollo front-end con React", shortName: "React" },
 ];
 
-const csvSources = [
-  {
-    cohort: 1,
-    module: 1,
-    fileName: "cohorte-1-modulo-1-diseno-web.csv",
-  },
-  {
-    cohort: 1,
-    module: 2,
-    fileName: "cohorte-1-modulo-2-programacion-javascript.csv",
-  },
-  {
-    cohort: 1,
-    module: 3,
-    fileName: "cohorte-1-modulo-3-backend-node.csv",
-  },
-];
-
 const collections = {
   students: "students",
   modules: "academic_modules",
   graduations: "student_module_graduations",
 };
 
-const dataDirectory = path.join(process.cwd(), "data", "graduados");
+const defaultWorkbookPath = path.join(
+  process.cwd(),
+  "data",
+  "graduados",
+  "egresados-diplomatura-fullstack-javascript.xlsx",
+);
 
 main().catch((error) => {
   console.error(error);
@@ -40,6 +28,7 @@ main().catch((error) => {
 });
 
 async function main() {
+  const options = parseArgs(process.argv.slice(2));
   const env = readEnv();
   const pocketBaseUrl = env.NEXT_PUBLIC_POCKETBASE_URL?.replace(/\/$/, "");
   const email = env.POCKETBASE_ADMIN_EMAIL;
@@ -49,35 +38,79 @@ async function main() {
     throw new Error("Missing PocketBase environment variables in .env.local");
   }
 
+  const sourceRows = await readWorkbookRecords(options.source);
+  const sourceValidation = validateSourceRows(sourceRows);
   const token = await authenticate(pocketBaseUrl, email, password);
-  await ensureCollections(pocketBaseUrl, token);
 
-  const sourceRows = readCsvRecords();
-  const moduleResult = await syncModules(pocketBaseUrl, token);
-  const studentResult = await syncStudents(pocketBaseUrl, token, sourceRows);
+  if (options.apply) {
+    await ensureCollections(pocketBaseUrl, token);
+  }
+
+  const moduleResult = await syncModules(pocketBaseUrl, token, options.apply);
+  const studentResult = await syncStudents(
+    pocketBaseUrl,
+    token,
+    sourceRows,
+    options.apply,
+  );
   const graduationResult = await syncGraduations(
     pocketBaseUrl,
     token,
     sourceRows,
     studentResult.recordsByDni,
     moduleResult.recordsByNumber,
+    options.apply,
   );
-
   const verification = await verifyCounts(pocketBaseUrl, token);
 
   console.log(
     JSON.stringify(
       {
-        sourceRows: sourceRows.length,
+        mode: options.apply ? "apply" : "dry-run",
+        source: {
+          workbook: path.relative(process.cwd(), options.source),
+          rows: sourceRows.length,
+          uniqueStudents: new Set(sourceRows.map((row) => row.dni)).size,
+          byCohortModule: countByCohortModule(sourceRows),
+          warnings: sourceValidation.warnings,
+        },
         modules: moduleResult.summary,
         students: studentResult.summary,
         graduations: graduationResult.summary,
-        verification,
+        pocketBaseBeforeOrAfter: verification,
       },
       null,
       2,
     ),
   );
+}
+
+function parseArgs(args) {
+  const options = {
+    apply: false,
+    source: defaultWorkbookPath,
+  };
+
+  for (const arg of args) {
+    if (arg === "--apply") {
+      options.apply = true;
+      continue;
+    }
+
+    if (arg === "--dry-run") {
+      options.apply = false;
+      continue;
+    }
+
+    if (arg.startsWith("--source=")) {
+      options.source = path.resolve(arg.slice("--source=".length));
+      continue;
+    }
+
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  return options;
 }
 
 function readEnv() {
@@ -108,6 +141,146 @@ async function authenticate(pocketBaseUrl, email, password) {
   }
 
   return payload.token;
+}
+
+async function readWorkbookRecords(workbookPath) {
+  const sheets = await readXlsxFile(workbookPath);
+  const records = [];
+
+  for (const sheet of sheets
+    .map((sheetItem) => ({ ...sheetItem, meta: parseSheetName(sheetItem.sheet) }))
+    .filter((sheetItem) => sheetItem.meta)
+    .sort(
+      (first, second) =>
+        first.meta.cohort - second.meta.cohort ||
+        first.meta.module - second.meta.module ||
+        first.sheet.localeCompare(second.sheet, "es"),
+    )) {
+    const headerIndex = sheet.data.findIndex((row) =>
+      row.some((cell) => normalizeHeader(cell) === "dni"),
+    );
+
+    if (headerIndex < 0) {
+      continue;
+    }
+
+    const headers = sheet.data[headerIndex].map(normalizeHeader);
+    const columnMap = {
+      lastName: findColumn(headers, [
+        "apellido/s",
+        "apellidos",
+        "apellido",
+        "alumno/s",
+        "alumnos",
+      ]),
+      firstName: findColumn(headers, ["nombre/s", "nombres", "nombre"]),
+      dni: findColumn(headers, ["dni"]),
+      birthDate: findColumn(headers, [
+        "fecha de nacimiento",
+        "fecha nacimiento",
+      ]),
+      gender: findColumn(headers, ["género", "genero"]),
+      email: findColumn(headers, ["e-mail", "correo electrónico", "email"]),
+      phone: findColumn(headers, [
+        "número de teléfono",
+        "numero de teléfono",
+        "número de telefono",
+        "numero de telefono",
+        "teléfono",
+        "telefono",
+      ]),
+    };
+
+    if (
+      columnMap.lastName == null ||
+      columnMap.firstName == null ||
+      columnMap.dni == null
+    ) {
+      throw new Error(`Missing required columns in sheet ${sheet.sheet}`);
+    }
+
+    for (const row of sheet.data.slice(headerIndex + 1)) {
+      const dni = normalizeDni(getByIndex(row, columnMap.dni));
+
+      if (!dni) {
+        continue;
+      }
+
+      const lastName = cleanCell(getByIndex(row, columnMap.lastName));
+      const firstName = cleanCell(getByIndex(row, columnMap.firstName));
+
+      records.push({
+        cohort: sheet.meta.cohort,
+        module: sheet.meta.module,
+        lastName,
+        firstName,
+        fullName: `${lastName}, ${firstName}`,
+        dni,
+        birthDate: formatDateCell(getByIndex(row, columnMap.birthDate)),
+        gender: cleanCell(getByIndex(row, columnMap.gender)),
+        phone: normalizePhone(getByIndex(row, columnMap.phone)),
+        email: cleanCell(getByIndex(row, columnMap.email)).toLowerCase(),
+        sourceFile: `${path.basename(workbookPath)}#${sheet.sheet}`,
+      });
+    }
+  }
+
+  return records;
+}
+
+function parseSheetName(sheetName) {
+  const match = sheetName.match(/Cohorte\s*(\d+).*?M[óo]dulo\s*(\d+)/i);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    cohort: Number(match[1]),
+    module: Number(match[2]),
+  };
+}
+
+function findColumn(headers, names) {
+  for (const name of names) {
+    const index = headers.indexOf(normalizeHeader(name));
+
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+function getByIndex(row, index) {
+  return index == null ? "" : row[index];
+}
+
+function validateSourceRows(sourceRows) {
+  const warnings = [];
+  const byGraduation = new Map();
+  const byStudent = new Map();
+
+  for (const row of sourceRows) {
+    const graduationKey = `${row.cohort}-${row.module}-${row.dni}`;
+    byGraduation.set(graduationKey, (byGraduation.get(graduationKey) ?? 0) + 1);
+    byStudent.set(row.dni, (byStudent.get(row.dni) ?? 0) + 1);
+  }
+
+  const duplicateGraduations = Array.from(byGraduation.entries()).filter(
+    ([, count]) => count > 1,
+  );
+
+  if (duplicateGraduations.length > 0) {
+    warnings.push({
+      type: "duplicate_graduations",
+      count: duplicateGraduations.length,
+      examples: duplicateGraduations.slice(0, 5).map(([key]) => key),
+    });
+  }
+
+  return { warnings };
 }
 
 async function ensureCollections(pocketBaseUrl, token) {
@@ -244,37 +417,7 @@ async function createCollection(pocketBaseUrl, token, schema) {
   }
 }
 
-function readCsvRecords() {
-  return csvSources.flatMap((source) => {
-    const csv = readFileSync(path.join(dataDirectory, source.fileName), "utf8");
-
-    return parseCsv(csv).map((row) => {
-      const lastName = cleanCell(row["Apellido/s"]);
-      const firstName = cleanCell(row["Nombre/s"]);
-      const dni = normalizeDni(row.DNI);
-
-      return {
-        cohort: source.cohort,
-        module: source.module,
-        lastName,
-        firstName,
-        fullName: `${lastName}, ${firstName}`,
-        dni,
-        birthDate: cleanCell(
-          getCell(row, ["Fecha de nacimiento", "Fecha de Nacimiento"]),
-        ),
-        gender: cleanCell(getCell(row, ["Género"])),
-        phone: cleanCell(getCell(row, ["Número de teléfono", "Teléfono"])),
-        email: cleanCell(
-          getCell(row, ["E-mail", "Correo electrónico"]),
-        ).toLowerCase(),
-        sourceFile: source.fileName,
-      };
-    });
-  });
-}
-
-async function syncModules(pocketBaseUrl, token) {
+async function syncModules(pocketBaseUrl, token, apply) {
   const existing = await getRecords(pocketBaseUrl, token, collections.modules);
   const existingByNumber = new Map(
     existing.map((record) => [Number(record.number), record]),
@@ -296,6 +439,7 @@ async function syncModules(pocketBaseUrl, token) {
       existingRecord,
       nextRecord,
       summary,
+      apply,
     );
 
     existingByNumber.set(moduleItem.id, saved);
@@ -304,11 +448,13 @@ async function syncModules(pocketBaseUrl, token) {
   return { recordsByNumber: existingByNumber, summary };
 }
 
-async function syncStudents(pocketBaseUrl, token, sourceRows) {
+async function syncStudents(pocketBaseUrl, token, sourceRows, apply) {
   const sourceByDni = new Map();
 
   for (const row of sourceRows) {
-    if (!sourceByDni.has(row.dni)) {
+    const existing = sourceByDni.get(row.dni);
+
+    if (!existing) {
       sourceByDni.set(row.dni, {
         dni: row.dni,
         lastName: row.lastName,
@@ -319,7 +465,10 @@ async function syncStudents(pocketBaseUrl, token, sourceRows) {
         phone: row.phone,
         email: row.email,
       });
+      continue;
     }
+
+    sourceByDni.set(row.dni, mergeStudent(existing, row));
   }
 
   const existing = await getRecords(pocketBaseUrl, token, collections.students);
@@ -336,6 +485,7 @@ async function syncStudents(pocketBaseUrl, token, sourceRows) {
       existingByDni.get(normalizeDni(student.dni)),
       student,
       summary,
+      apply,
     );
 
     existingByDni.set(normalizeDni(student.dni), saved);
@@ -344,12 +494,26 @@ async function syncStudents(pocketBaseUrl, token, sourceRows) {
   return { recordsByDni: existingByDni, summary };
 }
 
+function mergeStudent(existing, nextRow) {
+  return {
+    dni: existing.dni,
+    lastName: existing.lastName || nextRow.lastName,
+    firstName: existing.firstName || nextRow.firstName,
+    fullName: existing.fullName || nextRow.fullName,
+    birthDate: existing.birthDate || nextRow.birthDate,
+    gender: existing.gender || nextRow.gender,
+    phone: existing.phone || nextRow.phone,
+    email: existing.email || nextRow.email,
+  };
+}
+
 async function syncGraduations(
   pocketBaseUrl,
   token,
   sourceRows,
   studentsByDni,
   modulesByNumber,
+  apply,
 ) {
   const existing = await getRecords(
     pocketBaseUrl,
@@ -372,8 +536,8 @@ async function syncGraduations(
     const uniqueKey = `${row.cohort}-${row.module}-${row.dni}`;
     const nextRecord = {
       uniqueKey,
-      student: student.id,
-      module: moduleRecord.id,
+      student: student.id ?? `dry-run-student-${row.dni}`,
+      module: moduleRecord.id ?? `dry-run-module-${row.module}`,
       cohort: row.cohort,
       sourceFile: row.sourceFile,
     };
@@ -385,6 +549,7 @@ async function syncGraduations(
       existingByKey.get(normalizeGraduationKey(uniqueKey)),
       nextRecord,
       summary,
+      apply,
     );
 
     existingByKey.set(normalizeGraduationKey(uniqueKey), saved);
@@ -425,21 +590,26 @@ async function upsertRecord(
   existing,
   nextRecord,
   summary,
+  apply,
 ) {
   if (!existing) {
-    const created = await writeRecord(
-      pocketBaseUrl,
-      token,
-      collection,
-      "POST",
-      nextRecord,
-    );
     summary.created += 1;
-    return created;
+
+    if (!apply) {
+      return { id: `dry-run-${collection}-${summary.created}`, ...nextRecord };
+    }
+
+    return writeRecord(pocketBaseUrl, token, collection, "POST", nextRecord);
   }
 
   if (hasChanges(existing, nextRecord)) {
-    const updated = await writeRecord(
+    summary.updated += 1;
+
+    if (!apply) {
+      return { ...existing, ...nextRecord };
+    }
+
+    return writeRecord(
       pocketBaseUrl,
       token,
       collection,
@@ -447,8 +617,6 @@ async function upsertRecord(
       nextRecord,
       existing.id,
     );
-    summary.updated += 1;
-    return updated;
   }
 
   summary.unchanged += 1;
@@ -516,74 +684,60 @@ async function verifyCounts(pocketBaseUrl, token) {
   };
 }
 
+function countByCohortModule(records) {
+  return records.reduce((summary, record) => {
+    const key = `cohorte-${record.cohort}-modulo-${record.module}`;
+    summary[key] = (summary[key] ?? 0) + 1;
+    return summary;
+  }, {});
+}
+
 function createSummary() {
   return { created: 0, updated: 0, unchanged: 0 };
 }
 
-function parseCsv(csv) {
-  const lines = csv
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length > 0);
-
-  const [headerLine, ...dataLines] = lines;
-  const headers = splitCsvLine(headerLine).map(cleanCell);
-
-  return dataLines.map((line) => {
-    const values = splitCsvLine(line);
-
-    return headers.reduce((row, header, index) => {
-      row[header] = values[index] ?? "";
-      return row;
-    }, {});
-  });
-}
-
-function splitCsvLine(line) {
-  const values = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const nextChar = line[index + 1];
-
-    if (char === '"' && nextChar === '"') {
-      current += '"';
-      index += 1;
-      continue;
-    }
-
-    if (char === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-
-    if (char === "," && !inQuotes) {
-      values.push(current);
-      current = "";
-      continue;
-    }
-
-    current += char;
-  }
-
-  values.push(current);
-  return values;
+function normalizeHeader(value = "") {
+  return String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 function cleanCell(value = "") {
-  return value.trim().replace(/\s+/g, " ");
-}
-
-function getCell(row, names) {
-  for (const name of names) {
-    if (row[name] != null) {
-      return row[name];
-    }
+  if (value == null) {
+    return "";
   }
 
-  return "";
+  if (value instanceof Date) {
+    return formatDateCell(value);
+  }
+
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? String(value) : String(value);
+  }
+
+  return String(value).trim().replace(/\s+/g, " ");
+}
+
+function formatDateCell(value = "") {
+  if (!value) {
+    return "";
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    const day = String(value.getUTCDate()).padStart(2, "0");
+    const month = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const year = value.getUTCFullYear();
+    return `${day}/${month}/${year}`;
+  }
+
+  return cleanCell(value);
+}
+
+function normalizePhone(value = "") {
+  return cleanCell(value).replace(/\D/g, "");
 }
 
 function normalizeDni(value = "") {

@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "data:sync-pocketbase": "node scripts/sync-graduates-to-pocketbase.mjs"
+    "data:sync-pocketbase": "node scripts/sync-graduates-to-pocketbase.mjs --dry-run",
+    "data:sync-pocketbase:apply": "node scripts/sync-graduates-to-pocketbase.mjs --apply"
   },
   "dependencies": {
     "next": "16.2.10",
@@ -24,6 +25,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "read-excel-file": "^9.2.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
