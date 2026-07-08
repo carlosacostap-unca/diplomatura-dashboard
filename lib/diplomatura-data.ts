@@ -68,6 +68,7 @@ const csvSources: CsvSource[] = [
 ];
 
 const dataDirectory = path.join(process.cwd(), "data", "graduados");
+const defaultPocketBaseUrl = "https://pocketbase-dashboard-diplomatura.epixum.com";
 const graduationsCollection = "student_module_graduations";
 
 type PocketBaseStudentRecord = {
@@ -100,7 +101,10 @@ type PocketBaseGraduationRecord = {
 };
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const records = await readPocketBaseRecords().catch(() => readCsvRecords());
+  const records = await readPocketBaseRecords().catch((error) => {
+    console.error("Falling back to CSV graduate data", error);
+    return readCsvRecords();
+  });
   const moduleSummaries = buildModuleSummaries(records);
 
   return {
@@ -118,14 +122,9 @@ function readCsvRecords(): GraduateRecord[] {
 }
 
 async function readPocketBaseRecords(): Promise<GraduateRecord[]> {
-  const pocketBaseUrl = process.env.NEXT_PUBLIC_POCKETBASE_URL?.replace(
-    /\/$/,
-    "",
-  );
-
-  if (!pocketBaseUrl) {
-    throw new Error("Missing NEXT_PUBLIC_POCKETBASE_URL");
-  }
+  const pocketBaseUrl = (
+    process.env.NEXT_PUBLIC_POCKETBASE_URL ?? defaultPocketBaseUrl
+  ).replace(/\/$/, "");
 
   const records: GraduateRecord[] = [];
   let page = 1;
