@@ -14,6 +14,8 @@
     "data:sync-pocketbase:apply": "node scripts/sync-graduates-to-pocketbase.mjs --apply",
     "data:sync-enrollments": "node scripts/sync-enrollments-to-pocketbase.mjs --dry-run",
     "data:sync-enrollments:apply": "node scripts/sync-enrollments-to-pocketbase.mjs --apply",
+    "data:sync-cohort-enrollments": "node scripts/sync-cohort-enrollments-to-pocketbase.mjs --dry-run",
+    "data:sync-cohort-enrollments:apply": "node scripts/sync-cohort-enrollments-to-pocketbase.mjs --apply",
     "data:sync-module-2-enrollments": "node scripts/sync-enrollments-from-previous-module.mjs --dry-run",
     "data:sync-module-2-enrollments:apply": "node scripts/sync-enrollments-from-previous-module.mjs --apply"
   },
