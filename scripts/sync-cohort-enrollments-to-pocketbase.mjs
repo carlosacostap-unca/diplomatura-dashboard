@@ -54,11 +54,35 @@ async function main() {
       Number(record.cohort) === options.cohort &&
       record.module === moduleRecord.id,
   );
+  const cohortStudentIds = new Set(
+    enrollments
+      .filter((record) => Number(record.cohort) === options.cohort)
+      .map((record) => record.student),
+  );
   const reconciliation = reconcileRows(
     rows,
     students,
     moduleGraduations.map((record) => record.student),
+    cohortStudentIds,
   );
+  const deduplication = deduplicateMatchedRows(
+    rows,
+    reconciliation.studentByRow,
+  );
+  const importRows = deduplication.rows;
+  const unidentifiedRows = importRows.filter(
+    (row) =>
+      !reconciliation.studentByRow.has(row.index) &&
+      !row.dni &&
+      !row.email,
+  );
+  if (unidentifiedRows.length > 0) {
+    throw new Error(
+      `Cannot identify ${unidentifiedRows.length} name-only rows: ${unidentifiedRows
+        .map((row) => row.fullName)
+        .join(" | ")}`,
+    );
+  }
   const approvedStudentIds = new Set(
     moduleGraduations.map((record) => record.student),
   );
@@ -101,7 +125,7 @@ async function main() {
   const studentResult = await syncStudents(
     url,
     token,
-    rows,
+    importRows,
     reconciliation.studentByRow,
     options.apply,
   );
@@ -116,7 +140,7 @@ async function main() {
   const enrollmentResult = await syncEnrollments(
     url,
     token,
-    rows,
+    importRows,
     studentResult.studentByRow,
     moduleRecord,
     enrollments,
@@ -136,19 +160,37 @@ async function main() {
         source: {
           file: options.source,
           rows: rows.length,
+          uniquePeople: importRows.length,
+          duplicatePeople: deduplication.duplicates,
           withoutDni: rows.filter((row) => !row.dni).length,
         },
         target: { cohort: options.cohort, module: options.module },
         reconciliation: {
           matchedByDni: reconciliation.matchedByDni,
           matchedByEmail: reconciliation.matchedByEmail,
+          matchedByName: reconciliation.matchedByName,
+          matchedByShortName: reconciliation.matchedByShortName,
           matchedByPhoneAndName: reconciliation.matchedByPhoneAndName,
-          newStudents: rows.length - reconciliation.studentByRow.size,
+          newStudents: importRows.filter(
+            (row) => !reconciliation.studentByRow.has(row.index),
+          ).length,
+          newStudentCandidates: importRows
+            .filter((row) => !reconciliation.studentByRow.has(row.index))
+            .map((row) => ({
+              name: row.fullName,
+              dni: row.dni,
+              email: row.email,
+            })),
           approved: moduleGraduations.length,
           notApproved:
-            rows.length + inferredApprovedStudents.length - moduleGraduations.length,
+            importRows.length + inferredApprovedStudents.length - moduleGraduations.length,
           approvedOutsideSource: approvedOutsideSource.length,
           inferredEnrollmentsFromApproval: inferredApprovedStudents.length,
+          inferredApprovedStudents: inferredApprovedStudents.map((student) => ({
+            name: student.fullName,
+            dni: student.dni,
+            email: student.email,
+          })),
           identityConflicts: reconciliation.identityConflicts,
           targetEnrollmentsOutsideSource: targetOutsideSource.length,
         },
@@ -205,6 +247,12 @@ function readCsvRecords(filePath) {
     .filter((line) => line.trim());
   const headers = splitCsvLine(lines.shift()).map(normalizeHeader);
   const columns = {
+    combinedName: findColumn(headers, [
+      "alumnos",
+      "nombre/s y apellidos",
+      "nombre y apellido",
+      "nombre completo",
+    ]),
     lastName: findColumn(headers, ["apellido/s", "apellido", "apellidos"]),
     firstName: findColumn(headers, ["nombre/s", "nombre", "nombres"]),
     dni: findColumn(headers, ["dni", "documento"]),
@@ -212,28 +260,43 @@ function readCsvRecords(filePath) {
     phone: findColumn(headers, ["telefono", "numero de telefono"]),
   };
 
-  if (Object.values(columns).some((column) => column == null)) {
-    throw new Error("The enrollment CSV is missing required columns");
+  if (
+    columns.combinedName == null &&
+    (columns.lastName == null || columns.firstName == null)
+  ) {
+    throw new Error("The enrollment CSV has no usable name columns");
   }
 
   return lines.map((line, index) => {
     const values = splitCsvLine(line);
-    const lastName = cleanCell(values[columns.lastName]);
-    const firstName = cleanCell(values[columns.firstName]);
+    const lastName = cleanCell(readColumn(values, columns.lastName));
+    const firstName = cleanCell(readColumn(values, columns.firstName));
+    const combinedName =
+      columns.combinedName == null
+        ? ""
+        : cleanCell(readColumn(values, columns.combinedName));
+    const hasStructuredName = Boolean(lastName || firstName);
     return {
       index,
       lastName,
       firstName,
-      fullName: `${lastName}, ${firstName}`,
-      dni: normalizeDni(values[columns.dni]),
-      email: normalizeEmail(values[columns.email]),
-      phone: normalizePhone(values[columns.phone]),
+      fullName: hasStructuredName
+        ? `${lastName}, ${firstName}`
+        : combinedName,
+      hasStructuredName,
+      dni: normalizeDni(readColumn(values, columns.dni)),
+      email: normalizeEmail(readColumn(values, columns.email)),
+      phone: normalizePhone(readColumn(values, columns.phone)),
     };
   });
 }
 
 function validateSourceRows(rows) {
   if (rows.length === 0) throw new Error("The enrollment CSV has no records");
+  const rowsWithoutName = rows.filter((row) => !row.fullName);
+  if (rowsWithoutName.length > 0) {
+    throw new Error(`${rowsWithoutName.length} enrollment rows have no name`);
+  }
   for (const [label, getKey] of [
     ["DNI", (row) => row.dni],
     ["email", (row) => row.email],
@@ -245,18 +308,32 @@ function validateSourceRows(rows) {
   }
 }
 
-function reconcileRows(rows, students, approvedStudentIds) {
+function reconcileRows(rows, students, approvedStudentIds, cohortStudentIds) {
   const byDni = groupBy(students, (student) => normalizeDni(student.dni));
   const byEmail = groupBy(students, (student) => normalizeEmail(student.email));
   const byPhone = groupBy(students, (student) => normalizePhone(student.phone));
+  const byName = groupBy(students, (student) =>
+    normalizePersonName(student.fullName || `${student.lastName} ${student.firstName}`),
+  );
+  const byShortName = groupBy(students, (student) =>
+    shortNameKey(student.lastName, student.firstName),
+  );
   const approvedIds = new Set(approvedStudentIds);
   const approvedStudents = students.filter((student) => approvedIds.has(student.id));
   const approvedByDni = groupBy(approvedStudents, (student) => normalizeDni(student.dni));
   const approvedByEmail = groupBy(approvedStudents, (student) => normalizeEmail(student.email));
   const approvedByPhone = groupBy(approvedStudents, (student) => normalizePhone(student.phone));
+  const approvedByName = groupBy(approvedStudents, (student) =>
+    normalizePersonName(student.fullName || `${student.lastName} ${student.firstName}`),
+  );
+  const approvedByShortName = groupBy(approvedStudents, (student) =>
+    shortNameKey(student.lastName, student.firstName),
+  );
   const studentByRow = new Map();
   let matchedByDni = 0;
   let matchedByEmail = 0;
+  let matchedByName = 0;
+  let matchedByShortName = 0;
   let matchedByPhoneAndName = 0;
   const identityConflicts = [];
 
@@ -267,6 +344,25 @@ function reconcileRows(rows, students, approvedStudentIds) {
     }
     if (!match && row.email) {
       match = uniqueMatch(approvedByEmail.get(row.email), row, "approved email");
+    }
+    if (!match && row.fullName) {
+      match = uniqueMatch(
+        approvedByName.get(normalizePersonName(row.fullName)),
+        row,
+        "approved name",
+      );
+      if (match) matchedByName += 1;
+    }
+    if (!match) {
+      const key = rowShortNameKey(row);
+      if (key) {
+        match = uniqueMatch(
+          approvedByShortName.get(key),
+          row,
+          "approved surname and first name",
+        );
+        if (match) matchedByShortName += 1;
+      }
     }
     if (!match && row.phone) {
       match = uniqueMatch(approvedByPhone.get(row.phone), row, "approved phone");
@@ -279,18 +375,44 @@ function reconcileRows(rows, students, approvedStudentIds) {
       });
     }
     if (!match && row.dni) {
-      match = uniqueMatch(byDni.get(row.dni), row, "DNI");
+      match = uniqueMatch(byDni.get(row.dni), row, "DNI", cohortStudentIds);
     }
     if (match && row.dni && normalizeDni(match.dni) === row.dni) {
       matchedByDni += 1;
     }
     if (!match && row.email) {
-      const candidate = uniqueMatch(byEmail.get(row.email), row, "email");
+      const candidate = uniqueMatch(
+        byEmail.get(row.email),
+        row,
+        "email",
+        cohortStudentIds,
+      );
       if (candidate && row.dni && candidate.dni && normalizeDni(candidate.dni) !== row.dni) {
         throw new Error(`Conflicting DNI for ${row.fullName} matched by email`);
       }
       match = candidate;
       if (match) matchedByEmail += 1;
+    }
+    if (!match && row.fullName) {
+      match = uniqueMatch(
+        byName.get(normalizePersonName(row.fullName)),
+        row,
+        "name",
+        cohortStudentIds,
+      );
+      if (match) matchedByName += 1;
+    }
+    if (!match) {
+      const key = rowShortNameKey(row);
+      if (key) {
+        match = uniqueMatch(
+          byShortName.get(key),
+          row,
+          "surname and first name",
+          cohortStudentIds,
+        );
+        if (match) matchedByShortName += 1;
+      }
     }
     if (!match && row.phone) {
       const candidates = (byPhone.get(row.phone) ?? []).filter(
@@ -302,24 +424,62 @@ function reconcileRows(rows, students, approvedStudentIds) {
     if (match) studentByRow.set(row.index, match);
   }
 
-  const duplicateRelations = duplicateEntries(
-    rows.filter((row) => studentByRow.has(row.index)),
-    (row) => studentByRow.get(row.index).id,
-  );
-  if (duplicateRelations.length > 0) {
-    throw new Error("Multiple CSV rows resolve to the same PocketBase student");
-  }
-
   return {
     studentByRow,
     matchedByDni,
     matchedByEmail,
+    matchedByName,
+    matchedByShortName,
     matchedByPhoneAndName,
     identityConflicts,
   };
 }
 
-function uniqueMatch(matches = [], row, field) {
+function readColumn(values, index) {
+  return index == null ? "" : values[index];
+}
+
+function deduplicateMatchedRows(rows, studentByRow) {
+  const rowsByStudentId = groupBy(
+    rows.filter((row) => studentByRow.has(row.index)),
+    (row) => studentByRow.get(row.index).id,
+  );
+  const removedIndexes = new Set();
+  const duplicates = [];
+
+  for (const matchedRows of rowsByStudentId.values()) {
+    if (matchedRows.length < 2) continue;
+    const student = studentByRow.get(matchedRows[0].index);
+    const preferredRow =
+      matchedRows.find(
+        (row) => row.email === normalizeEmail(student.email),
+      ) ?? matchedRows[0];
+
+    for (const row of matchedRows) {
+      if (row.index !== preferredRow.index) removedIndexes.add(row.index);
+    }
+    duplicates.push({
+      student: student.fullName,
+      keptEmail: preferredRow.email,
+      duplicateEmails: matchedRows
+        .filter((row) => row.index !== preferredRow.index)
+        .map((row) => row.email),
+    });
+  }
+
+  return {
+    rows: rows.filter((row) => !removedIndexes.has(row.index)),
+    duplicates,
+  };
+}
+
+function uniqueMatch(matches = [], row, field, preferredStudentIds) {
+  if (matches.length > 1 && preferredStudentIds) {
+    const preferredMatches = matches.filter((student) =>
+      preferredStudentIds.has(student.id),
+    );
+    if (preferredMatches.length === 1) return preferredMatches[0];
+  }
   if (matches.length > 1) {
     throw new Error(`Ambiguous ${field} match for ${row.fullName}`);
   }
@@ -333,10 +493,15 @@ async function syncStudents(url, token, rows, initialStudentByRow, apply) {
   for (const row of rows) {
     const existing = studentByRow.get(row.index);
     if (!existing) {
+      if (!row.dni && !row.email) {
+        throw new Error(
+          `Cannot create ${row.fullName} without DNI or email`,
+        );
+      }
       const record = {
         identityKey: row.dni ? `dni:${row.dni}` : `email:${row.email}`,
         dni: row.dni,
-        lastName: row.lastName,
+        lastName: row.lastName || row.fullName,
         firstName: row.firstName,
         fullName: row.fullName,
         birthDate: "",
@@ -358,11 +523,11 @@ async function syncStudents(url, token, rows, initialStudentByRow, apply) {
     const next = {
       identityKey: nextDni ? `dni:${normalizeDni(nextDni)}` : existing.identityKey,
       dni: nextDni,
-      lastName: row.lastName,
-      firstName: row.firstName,
-      fullName: row.fullName,
-      phone: row.phone,
-      email: row.email,
+      lastName: row.hasStructuredName ? row.lastName : existing.lastName,
+      firstName: row.hasStructuredName ? row.firstName : existing.firstName,
+      fullName: row.hasStructuredName ? row.fullName : existing.fullName,
+      phone: row.phone || existing.phone,
+      email: row.email || existing.email,
     };
     if (hasChanges(existing, next)) {
       summary.updated += 1;
@@ -717,6 +882,30 @@ function normalizeHeader(value = "") {
 
 function normalizeName(lastName = "", firstName = "") {
   return normalizeText(`${lastName} ${firstName}`).replace(/\s+/g, " ");
+}
+
+function normalizePersonName(value = "") {
+  return normalizeText(value.replace(/,/g, " "))
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
+function rowShortNameKey(row) {
+  if (row.hasStructuredName) {
+    return shortNameKey(row.lastName, row.firstName);
+  }
+  const [lastName, firstName = ""] = row.fullName.split(",", 2);
+  return shortNameKey(lastName, firstName);
+}
+
+function shortNameKey(lastName = "", firstName = "") {
+  const normalizedLastName = normalizeText(lastName).replace(/\s+/g, " ");
+  const firstGivenName = normalizeText(firstName).split(/\s+/).filter(Boolean)[0];
+  return normalizedLastName && firstGivenName
+    ? `${normalizedLastName}|${firstGivenName}`
+    : "";
 }
 
 function normalizeText(value = "") {

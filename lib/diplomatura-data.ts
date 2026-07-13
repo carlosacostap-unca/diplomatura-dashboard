@@ -4,26 +4,6 @@ import path from "node:path";
 export type CohortId = 1 | 2 | 3 | 4 | 5 | 6;
 export type ModuleId = 1 | 2 | 3 | 4;
 export type EnrollmentType = "new" | "repeater" | "unknown";
-export type DataInconsistencyType =
-  | "missing_source_dni"
-  | "conflicting_dni"
-  | "duplicate_identity"
-  | "approved_missing_from_enrollment_source";
-
-export type DataInconsistency = {
-  id: string;
-  studentId: string;
-  cohort: CohortId;
-  module: ModuleId;
-  studentName: string;
-  dni: string;
-  type: DataInconsistencyType;
-  severity: "warning" | "error";
-  title: string;
-  detail: string;
-  sourceFile: string;
-  status: "open" | "resolved";
-};
 
 export type StudentModuleRecord = {
   id: string;
@@ -59,7 +39,6 @@ export type DashboardData = {
   modules: { id: ModuleId; name: string; shortName: string }[];
   records: StudentModuleRecord[];
   moduleSummaries: ModuleSummary[];
-  inconsistencies: DataInconsistency[];
 };
 
 type CsvSource = {
@@ -125,128 +104,17 @@ type PocketBaseAcademicRecord = {
 };
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const [records, students] = await Promise.all([
-    readPocketBaseRecords().catch((error) => {
-      console.error("Falling back to local academic data", error);
-      return readLocalRecords();
-    }),
-    readPocketBaseStudents().catch((error) => {
-      console.error("Could not read PocketBase students for data checks", error);
-      return [];
-    }),
-  ]);
-  const inconsistencies = buildDataInconsistencies(records, students);
+  const records = await readPocketBaseRecords().catch((error) => {
+    console.error("Falling back to local academic data", error);
+    return readLocalRecords();
+  });
 
   return {
     cohorts,
     modules,
     records,
     moduleSummaries: buildModuleSummaries(records),
-    inconsistencies,
   };
-}
-
-async function readPocketBaseStudents(): Promise<PocketBaseStudentRecord[]> {
-  const pocketBaseUrl = (
-    process.env.NEXT_PUBLIC_POCKETBASE_URL ?? defaultPocketBaseUrl
-  ).replace(/\/$/, "");
-  const students: PocketBaseStudentRecord[] = [];
-  let page = 1;
-  let totalPages = 1;
-
-  while (page <= totalPages) {
-    const response = await fetch(
-      `${pocketBaseUrl}/api/collections/students/records?page=${page}&perPage=500&sort=lastName,firstName`,
-      { cache: "no-store" },
-    );
-    if (!response.ok) {
-      throw new Error(`PocketBase student read failed: ${response.status}`);
-    }
-    const payload = (await response.json()) as {
-      items: PocketBaseStudentRecord[];
-      totalPages: number;
-    };
-    students.push(...payload.items);
-    totalPages = payload.totalPages;
-    page += 1;
-  }
-
-  return students;
-}
-
-function buildDataInconsistencies(
-  records: StudentModuleRecord[],
-  students: PocketBaseStudentRecord[],
-): DataInconsistency[] {
-  const inconsistencies: DataInconsistency[] = [];
-
-  for (const record of records) {
-    if (record.enrollmentKnown && !record.dni) {
-      inconsistencies.push({
-        id: `missing-dni-${record.id}`,
-        studentId: record.studentId,
-        cohort: record.cohort,
-        module: record.module,
-        studentName: record.fullName,
-        dni: "",
-        type: "missing_source_dni",
-        severity: "warning",
-        title: "DNI no informado",
-        detail: "El alumno tiene una inscripción registrada, pero su ficha no contiene DNI.",
-        sourceFile: record.sourceFile,
-        status: "open",
-      });
-    }
-
-    if (record.sourceFile.startsWith("derived:approved-not-in-")) {
-      inconsistencies.push({
-        id: `inferred-enrollment-${record.id}`,
-        studentId: record.studentId,
-        cohort: record.cohort,
-        module: record.module,
-        studentName: record.fullName,
-        dni: record.dni,
-        type: "approved_missing_from_enrollment_source",
-        severity: "error",
-        title: "Aprobado ausente del listado de inscriptos",
-        detail: "La aprobación existe, pero el alumno no figuraba en la planilla de inscripciones. La inscripción fue inferida.",
-        sourceFile: record.sourceFile.replace("derived:approved-not-in-", ""),
-        status: "open",
-      });
-    }
-  }
-
-  const studentsByEmail = new Map<string, PocketBaseStudentRecord[]>();
-  for (const student of students) {
-    const email = student.email.trim().toLowerCase();
-    if (!email || !student.dni) continue;
-    studentsByEmail.set(email, [...(studentsByEmail.get(email) ?? []), student]);
-  }
-
-  for (const [email, matches] of studentsByEmail) {
-    const dniValues = Array.from(new Set(matches.map((student) => student.dni)));
-    if (dniValues.length < 2) continue;
-    const studentIds = new Set(matches.map((student) => student.id));
-    const relatedRecord = records.find((record) => studentIds.has(record.studentId));
-    if (!relatedRecord) continue;
-
-    inconsistencies.push({
-      id: `duplicate-identity-${matches.map((student) => student.id).sort().join("-")}`,
-      studentId: relatedRecord.studentId,
-      cohort: relatedRecord.cohort,
-      module: relatedRecord.module,
-      studentName: relatedRecord.fullName,
-      dni: relatedRecord.dni,
-      type: "duplicate_identity",
-      severity: "error",
-      title: "Identidad duplicada con DNI contradictorio",
-      detail: `El correo ${email} aparece en ${matches.length} fichas con los DNI ${dniValues.join(" y ")}.`,
-      sourceFile: "PocketBase: students",
-      status: "open",
-    });
-  }
-
-  return inconsistencies;
 }
 
 async function readPocketBaseRecords(): Promise<StudentModuleRecord[]> {

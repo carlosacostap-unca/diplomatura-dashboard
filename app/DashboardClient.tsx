@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import type {
   CohortId,
-  DataInconsistency,
   DashboardData,
   ModuleId,
   StudentModuleRecord,
@@ -152,8 +151,6 @@ export default function DashboardClient({ data }: DashboardClientProps) {
           <Metric label="Nuevos" value={selectedSummary.newStudents} />
           <Metric label="Recursantes" value={selectedSummary.repeaters} />
         </section>
-
-        <DataInconsistencyPanel inconsistencies={data.inconsistencies} />
 
         <section className="grid gap-4 rounded-lg border border-[#303741] bg-[#181c22] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.22)] md:grid-cols-2 xl:grid-cols-[1.2fr_repeat(5,1fr)]">
           <label className="flex flex-col gap-2">
@@ -321,121 +318,6 @@ export default function DashboardClient({ data }: DashboardClientProps) {
       </div>
     </main>
   );
-}
-
-function DataInconsistencyPanel({
-  inconsistencies,
-}: {
-  inconsistencies: DataInconsistency[];
-}) {
-  const openItems = inconsistencies
-    .filter((item) => item.status === "open")
-    .sort((first, second) => {
-      if (first.severity !== second.severity) {
-        return first.severity === "error" ? -1 : 1;
-      }
-      return first.studentName.localeCompare(second.studentName, "es");
-    });
-  const errors = openItems.filter((item) => item.severity === "error").length;
-  const warnings = openItems.length - errors;
-
-  return (
-    <section className="overflow-hidden rounded-lg border border-[#3b4652] bg-[#181c22] shadow-[0_18px_60px_rgba(0,0,0,0.18)]">
-      <div className="flex flex-col gap-3 border-b border-[#303741] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="text-lg font-semibold text-[#fbf7ef]">
-              Inconsistencias de datos
-            </h2>
-            <span className="inline-flex h-7 items-center rounded-full bg-[#3b2528] px-3 text-xs font-semibold text-[#ffb4ad]">
-              {openItems.length} abiertas
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-[#aab4c0]">
-            Diferencias detectadas al cruzar inscripciones, alumnos y
-            aprobaciones.
-          </p>
-        </div>
-        <div className="flex gap-4 text-sm">
-          <span className="font-medium text-[#ffb4ad]">{errors} errores</span>
-          <span className="font-medium text-[#ffd58a]">
-            {warnings} advertencias
-          </span>
-        </div>
-      </div>
-
-      <div className="max-h-72 overflow-auto">
-        <table className="w-full min-w-[980px] border-collapse text-left text-sm">
-          <thead className="sticky top-0 bg-[#13171d] text-xs uppercase text-[#b7c0cb]">
-            <tr>
-              <TableHead>Tipo</TableHead>
-              <TableHead>Alumno</TableHead>
-              <TableHead>Ubicacion</TableHead>
-              <TableHead>Detalle</TableHead>
-              <TableHead>Fuente</TableHead>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#303741]">
-            {openItems.map((item) => (
-              <tr
-                className="align-top text-[#dfe5eb] transition hover:bg-[#20262e]"
-                key={item.id}
-              >
-                <td className="px-4 py-3">
-                  <span
-                    className={
-                      item.severity === "error"
-                        ? "inline-flex h-8 items-center rounded-full bg-[#3b2528] px-3 text-xs font-semibold text-[#ffb4ad]"
-                        : "inline-flex h-8 items-center rounded-full bg-[#3d321d] px-3 text-xs font-semibold text-[#ffd58a]"
-                    }
-                  >
-                    {inconsistencyTypeLabel(item.type)}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <p className="font-semibold text-[#fbf7ef]">
-                    {item.studentName}
-                  </p>
-                  <p className="text-xs text-[#aab4c0]">
-                    {item.dni ? formatDni(item.dni) : "DNI sin informar"}
-                  </p>
-                </td>
-                <td className="px-4 py-3">
-                  Cohorte {item.cohort}, modulo {item.module}
-                </td>
-                <td className="max-w-md px-4 py-3">
-                  <p className="font-medium text-[#fbf7ef]">{item.title}</p>
-                  <p className="mt-1 text-xs leading-5 text-[#aab4c0]">
-                    {item.detail}
-                  </p>
-                </td>
-                <td className="px-4 py-3 text-xs text-[#aab4c0]">
-                  {item.sourceFile}
-                </td>
-              </tr>
-            ))}
-            {openItems.length === 0 && (
-              <tr>
-                <td className="px-4 py-8 text-center text-[#aab4c0]" colSpan={5}>
-                  No hay inconsistencias abiertas.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function inconsistencyTypeLabel(type: DataInconsistency["type"]): string {
-  const labels = {
-    missing_source_dni: "DNI ausente",
-    conflicting_dni: "DNI contradictorio",
-    duplicate_identity: "Identidad duplicada",
-    approved_missing_from_enrollment_source: "Inscripcion ausente",
-  };
-  return labels[type];
 }
 
 function Metric({
