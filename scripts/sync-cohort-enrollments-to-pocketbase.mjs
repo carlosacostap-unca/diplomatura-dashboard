@@ -24,8 +24,10 @@ async function main() {
     throw new Error("Missing PocketBase environment variables in .env.local");
   }
 
-  const rows = readCsvRecords(options.source);
-  validateSourceRows(rows);
+  const sourceRows = readCsvRecords(options.source);
+  validateSourceRows(sourceRows);
+  const sourceDeduplication = deduplicateSourceRows(sourceRows);
+  const rows = sourceDeduplication.rows;
 
   const token = await authenticate(url, email, password);
   const [enrollmentCollection, students, modules, graduations, enrollments] =
@@ -159,10 +161,13 @@ async function main() {
         mode: options.apply ? "apply" : "dry-run",
         source: {
           file: options.source,
-          rows: rows.length,
+          rows: sourceRows.length,
           uniquePeople: importRows.length,
-          duplicatePeople: deduplication.duplicates,
-          withoutDni: rows.filter((row) => !row.dni).length,
+          duplicatePeople: [
+            ...sourceDeduplication.duplicates,
+            ...deduplication.duplicates,
+          ],
+          withoutDni: sourceRows.filter((row) => !row.dni).length,
         },
         target: { cohort: options.cohort, module: options.module },
         reconciliation: {
@@ -297,15 +302,6 @@ function validateSourceRows(rows) {
   if (rowsWithoutName.length > 0) {
     throw new Error(`${rowsWithoutName.length} enrollment rows have no name`);
   }
-  for (const [label, getKey] of [
-    ["DNI", (row) => row.dni],
-    ["email", (row) => row.email],
-  ]) {
-    const duplicates = duplicateEntries(rows, getKey);
-    if (duplicates.length > 0) {
-      throw new Error(`Duplicate ${label}: ${duplicates.slice(0, 5).join(", ")}`);
-    }
-  }
 }
 
 function reconcileRows(rows, students, approvedStudentIds, cohortStudentIds) {
@@ -367,13 +363,6 @@ function reconcileRows(rows, students, approvedStudentIds, cohortStudentIds) {
     if (!match && row.phone) {
       match = uniqueMatch(approvedByPhone.get(row.phone), row, "approved phone");
     }
-    if (match && row.dni && match.dni && normalizeDni(match.dni) !== row.dni) {
-      identityConflicts.push({
-        student: row.fullName,
-        csvDni: row.dni,
-        pocketBaseDni: normalizeDni(match.dni),
-      });
-    }
     if (!match && row.dni) {
       match = uniqueMatch(byDni.get(row.dni), row, "DNI", cohortStudentIds);
     }
@@ -387,9 +376,6 @@ function reconcileRows(rows, students, approvedStudentIds, cohortStudentIds) {
         "email",
         cohortStudentIds,
       );
-      if (candidate && row.dni && candidate.dni && normalizeDni(candidate.dni) !== row.dni) {
-        throw new Error(`Conflicting DNI for ${row.fullName} matched by email`);
-      }
       match = candidate;
       if (match) matchedByEmail += 1;
     }
@@ -421,6 +407,13 @@ function reconcileRows(rows, students, approvedStudentIds, cohortStudentIds) {
       match = uniqueMatch(candidates, row, "phone and name");
       if (match) matchedByPhoneAndName += 1;
     }
+    if (match && row.dni && match.dni && normalizeDni(match.dni) !== row.dni) {
+      identityConflicts.push({
+        student: row.fullName,
+        csvDni: row.dni,
+        pocketBaseDni: normalizeDni(match.dni),
+      });
+    }
     if (match) studentByRow.set(row.index, match);
   }
 
@@ -437,6 +430,60 @@ function reconcileRows(rows, students, approvedStudentIds, cohortStudentIds) {
 
 function readColumn(values, index) {
   return index == null ? "" : values[index];
+}
+
+function deduplicateSourceRows(rows) {
+  const byEmail = deduplicateRowsByKey(rows, (row) => row.email, "email");
+  const byDni = deduplicateRowsByKey(byEmail.rows, (row) => row.dni, "DNI");
+  return {
+    rows: byDni.rows,
+    duplicates: [...byEmail.duplicates, ...byDni.duplicates],
+  };
+}
+
+function deduplicateRowsByKey(rows, getKey, reason) {
+  const groups = groupBy(rows, getKey);
+  const removedIndexes = new Set();
+  const duplicates = [];
+
+  for (const [key, matchedRows] of groups) {
+    if (matchedRows.length < 2) continue;
+    const names = new Set(
+      matchedRows.map((row) => normalizePersonName(row.fullName)),
+    );
+    const dniValues = new Set(matchedRows.map((row) => row.dni).filter(Boolean));
+    if (names.size > 1 || dniValues.size > 1) {
+      throw new Error(
+        `Conflicting rows share ${reason} ${key}: ${matchedRows
+          .map((row) => row.fullName)
+          .join(" | ")}`,
+      );
+    }
+
+    const preferredRow = [...matchedRows].sort(
+      (first, second) => sourceRowScore(second) - sourceRowScore(first),
+    )[0];
+    for (const row of matchedRows) {
+      if (row.index !== preferredRow.index) removedIndexes.add(row.index);
+    }
+    duplicates.push({
+      student: preferredRow.fullName,
+      reason,
+      value: key,
+      removedRows: matchedRows.length - 1,
+    });
+  }
+
+  return {
+    rows: rows.filter((row) => !removedIndexes.has(row.index)),
+    duplicates,
+  };
+}
+
+function sourceRowScore(row) {
+  return [row.dni, row.email, row.phone, row.lastName, row.firstName].filter(
+    Boolean,
+  ).length;
 }
 
 function deduplicateMatchedRows(rows, studentByRow) {
@@ -858,12 +905,6 @@ function groupBy(items, getKey) {
     grouped.set(key, [...(grouped.get(key) ?? []), item]);
   }
   return grouped;
-}
-
-function duplicateEntries(items, getKey) {
-  return Array.from(groupBy(items, getKey).entries())
-    .filter(([, values]) => values.length > 1)
-    .map(([key]) => key);
 }
 
 function hasChanges(existing, next) {
