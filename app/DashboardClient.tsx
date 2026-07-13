@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import type {
   CohortId,
@@ -117,6 +118,20 @@ export default function DashboardClient({ data }: DashboardClientProps) {
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8">
         <header className="grid gap-6 border-b border-[#2d333b] pb-6 lg:grid-cols-[1fr_360px] lg:items-end">
           <div className="space-y-4">
+            <nav
+              className="flex items-center gap-2 text-sm"
+              aria-label="Navegación principal"
+            >
+              <span className="rounded-md bg-[#143c36] px-3 py-2 font-semibold text-[#9ff0db]">
+                Dashboard
+              </span>
+              <Link
+                href="/estudiantes"
+                className="rounded-md px-3 py-2 font-medium text-[#aab4c0] transition hover:bg-[#20262e] hover:text-[#fbf7ef]"
+              >
+                Estudiantes
+              </Link>
+            </nav>
             <div>
               <p className="text-sm font-semibold uppercase text-[#5ee0c1]">
                 Dashboard academico

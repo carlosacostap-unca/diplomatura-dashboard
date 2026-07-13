@@ -41,6 +41,21 @@ export type DashboardData = {
   moduleSummaries: ModuleSummary[];
 };
 
+export type StudentProfile = {
+  id: string;
+  lastName: string;
+  firstName: string;
+  fullName: string;
+  dni: string;
+  birthDate: string;
+  gender: string;
+  phone: string;
+  email: string;
+  cohorts: CohortId[];
+  approvedModules: ModuleId[];
+  academicRecords: StudentModuleRecord[];
+};
+
 type CsvSource = {
   cohort: CohortId;
   module: ModuleId;
@@ -115,6 +130,62 @@ export async function getDashboardData(): Promise<DashboardData> {
     records,
     moduleSummaries: buildModuleSummaries(records),
   };
+}
+
+export async function getStudentProfiles(): Promise<StudentProfile[]> {
+  const data = await getDashboardData();
+  const profiles = new Map<string, StudentProfile>();
+
+  for (const record of data.records) {
+    const current = profiles.get(record.studentId);
+
+    if (current) {
+      current.academicRecords.push(record);
+
+      if (!current.cohorts.includes(record.cohort)) {
+        current.cohorts.push(record.cohort);
+      }
+
+      if (record.approved && !current.approvedModules.includes(record.module)) {
+        current.approvedModules.push(record.module);
+      }
+      continue;
+    }
+
+    profiles.set(record.studentId, {
+      id: record.studentId,
+      lastName: record.lastName,
+      firstName: record.firstName,
+      fullName: record.fullName,
+      dni: record.dni,
+      birthDate: record.birthDate,
+      gender: record.gender,
+      phone: record.phone,
+      email: record.email,
+      cohorts: [record.cohort],
+      approvedModules: record.approved ? [record.module] : [],
+      academicRecords: [record],
+    });
+  }
+
+  return Array.from(profiles.values())
+    .map((profile) => ({
+      ...profile,
+      cohorts: profile.cohorts.sort((first, second) => first - second),
+      approvedModules: profile.approvedModules.sort(
+        (first, second) => first - second,
+      ),
+      academicRecords: profile.academicRecords.sort(
+        (first, second) =>
+          first.cohort - second.cohort || first.module - second.module,
+      ),
+    }))
+    .sort((first, second) =>
+      `${first.lastName} ${first.firstName}`.localeCompare(
+        `${second.lastName} ${second.firstName}`,
+        "es",
+      ),
+    );
 }
 
 async function readPocketBaseRecords(): Promise<StudentModuleRecord[]> {
