@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import type {
   CohortId,
   DashboardData,
-  GraduateRecord,
   ModuleId,
+  StudentModuleRecord,
 } from "@/lib/diplomatura-data";
 
 type SelectValue = "all" | string;
@@ -18,13 +18,14 @@ export default function DashboardClient({ data }: DashboardClientProps) {
   const [selectedCohort, setSelectedCohort] = useState<SelectValue>("all");
   const [selectedModule, setSelectedModule] = useState<SelectValue>("all");
   const [selectedGender, setSelectedGender] = useState<SelectValue>("all");
+  const [selectedResult, setSelectedResult] = useState<SelectValue>("all");
   const [search, setSearch] = useState("");
 
   const genderOptions = useMemo(
     () =>
-      Array.from(new Set(data.records.map((record) => record.gender))).sort(
-        (first, second) => first.localeCompare(second, "es"),
-      ),
+      Array.from(
+        new Set(data.records.map((record) => record.gender).filter(Boolean)),
+      ).sort((first, second) => first.localeCompare(second, "es")),
     [data.records],
   );
 
@@ -32,9 +33,13 @@ export default function DashboardClient({ data }: DashboardClientProps) {
     const progress = new Map<string, Set<ModuleId>>();
 
     for (const record of data.records) {
-      const modules = progress.get(record.dni) ?? new Set<ModuleId>();
+      if (!record.approved) {
+        continue;
+      }
+
+      const modules = progress.get(record.studentId) ?? new Set<ModuleId>();
       modules.add(record.module);
-      progress.set(record.dni, modules);
+      progress.set(record.studentId, modules);
     }
 
     return progress;
@@ -50,28 +55,41 @@ export default function DashboardClient({ data }: DashboardClientProps) {
         selectedModule === "all" || record.module === Number(selectedModule);
       const matchesGender =
         selectedGender === "all" || record.gender === selectedGender;
+      const matchesResult =
+        selectedResult === "all" ||
+        record.approved === (selectedResult === "approved");
       const matchesSearch =
         searchValue.length === 0 ||
         normalizeSearch(
           `${record.fullName} ${record.dni} ${record.email} ${record.phone}`,
         ).includes(searchValue);
 
-      return matchesCohort && matchesModule && matchesGender && matchesSearch;
+      return (
+        matchesCohort &&
+        matchesModule &&
+        matchesGender &&
+        matchesResult &&
+        matchesSearch
+      );
     });
-  }, [data.records, search, selectedCohort, selectedGender, selectedModule]);
+  }, [
+    data.records,
+    search,
+    selectedCohort,
+    selectedGender,
+    selectedModule,
+    selectedResult,
+  ]);
 
   const selectedSummary = useMemo(() => {
-    const uniquePeople = new Set(filteredRecords.map((record) => record.dni));
-    const emails = new Set(filteredRecords.map((record) => record.email));
-
     return {
       records: filteredRecords.length,
-      people: uniquePeople.size,
-      emails: emails.size,
+      approved: filteredRecords.filter((record) => record.approved).length,
+      notApproved: filteredRecords.filter((record) => !record.approved).length,
     };
   }, [filteredRecords]);
 
-  const totalPeople = new Set(data.records.map((record) => record.dni)).size;
+  const totalPeople = new Set(data.records.map((record) => record.studentId)).size;
   const loadedSources = data.moduleSummaries.length;
   const totalSources = data.cohorts.length * data.modules.length;
 
@@ -95,13 +113,13 @@ export default function DashboardClient({ data }: DashboardClientProps) {
               </h1>
             </div>
             <p className="max-w-3xl text-base leading-7 text-[#aab4c0]">
-              Seguimiento de egresados por cohorte y modulo a partir de los CSV
-              oficiales de aprobacion.
+              Seguimiento de inscriptos y resultados por cohorte y módulo a
+              partir de los registros académicos oficiales.
             </p>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <Metric label="Registros" value={data.records.length} />
+            <Metric label="Cursadas" value={data.records.length} />
             <Metric label="Personas" value={totalPeople} />
             <Metric label="Cargas" value={`${loadedSources}/${totalSources}`} />
           </div>
@@ -109,15 +127,15 @@ export default function DashboardClient({ data }: DashboardClientProps) {
 
         <section className="grid gap-3 sm:grid-cols-3">
           <Metric
-            label="Egresados filtrados"
+            label="Alumnos filtrados"
             value={selectedSummary.records}
             tone="strong"
           />
-          <Metric label="DNI unicos" value={selectedSummary.people} />
-          <Metric label="Correos unicos" value={selectedSummary.emails} />
+          <Metric label="Aprobaron" value={selectedSummary.approved} />
+          <Metric label="No aprobaron" value={selectedSummary.notApproved} />
         </section>
 
-        <section className="grid gap-4 rounded-lg border border-[#303741] bg-[#181c22] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.22)] lg:grid-cols-[1.2fr_1fr_1fr_1fr]">
+        <section className="grid gap-4 rounded-lg border border-[#303741] bg-[#181c22] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.22)] md:grid-cols-2 xl:grid-cols-[1.2fr_repeat(4,1fr)]">
           <label className="flex flex-col gap-2">
             <span className="text-sm font-medium text-[#b7c0cb]">Buscar</span>
             <input
@@ -156,6 +174,16 @@ export default function DashboardClient({ data }: DashboardClientProps) {
               value: gender,
               label: gender,
             }))}
+          />
+
+          <FilterSelect
+            label="Resultado"
+            value={selectedResult}
+            onChange={setSelectedResult}
+            options={[
+              { value: "approved", label: "Aprobó" },
+              { value: "not-approved", label: "No aprobó" },
+            ]}
           />
         </section>
 
@@ -198,7 +226,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
             <div className="flex flex-col gap-2 border-b border-[#303741] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-[#fbf7ef]">
-                  Egresados
+                  Alumnos
                 </h2>
                 <p className="text-sm text-[#aab4c0]">
                   {filteredRecords.length} registros visibles
@@ -211,6 +239,7 @@ export default function DashboardClient({ data }: DashboardClientProps) {
                   setSelectedCohort("all");
                   setSelectedModule("all");
                   setSelectedGender("all");
+                  setSelectedResult("all");
                   setSearch("");
                 }}
               >
@@ -227,17 +256,30 @@ export default function DashboardClient({ data }: DashboardClientProps) {
                     <TableHead>Cohorte</TableHead>
                     <TableHead>Modulo</TableHead>
                     <TableHead>Contacto</TableHead>
+                    <TableHead>Resultado</TableHead>
                     <TableHead>Trayectoria</TableHead>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#303741]">
                   {filteredRecords.map((record) => (
-                    <GraduateRow
+                    <StudentRow
                       key={record.id}
                       record={record}
-                      approvedModules={personProgress.get(record.dni)?.size ?? 1}
+                      approvedModules={
+                        personProgress.get(record.studentId)?.size ?? 0
+                      }
                     />
                   ))}
+                  {filteredRecords.length === 0 && (
+                    <tr>
+                      <td
+                        className="px-4 py-10 text-center text-[#aab4c0]"
+                        colSpan={7}
+                      >
+                        No hay alumnos para los filtros seleccionados.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -324,7 +366,7 @@ function CohortRow({
 }) {
   return (
     <>
-      <div className="flex h-16 items-center rounded-md bg-[#20262e] px-2 text-xs font-semibold text-[#b7c0cb]">
+      <div className="flex h-20 items-center rounded-md bg-[#20262e] px-2 text-xs font-semibold text-[#b7c0cb]">
         Cohorte {cohort}
       </div>
       {[1, 2, 3, 4].map((module) => {
@@ -341,17 +383,28 @@ function CohortRow({
             type="button"
             className={
               summary
-                ? `flex h-16 flex-col items-center justify-center rounded-md border px-1 text-center transition ${
+                ? `flex h-20 flex-col items-center justify-center rounded-md border px-1 text-center transition ${
                     isSelected
                       ? "border-[#5ee0c1] bg-[#1f9d82] text-[#06110f]"
                       : "border-[#276b60] bg-[#123a36] text-[#9ff0db] hover:border-[#5ee0c1]"
                   }`
-                : "flex h-16 flex-col items-center justify-center rounded-md border border-dashed border-[#3b4652] bg-[#12161c] px-1 text-center text-[#7e8793]"
+                : "flex h-20 flex-col items-center justify-center rounded-md border border-dashed border-[#3b4652] bg-[#12161c] px-1 text-center text-[#7e8793]"
             }
             onClick={() => onSelect(cohort, moduleId)}
           >
-            <span className="text-lg font-semibold">{summary?.count ?? 0}</span>
-            <span className="text-[11px]">egresados</span>
+            <span className="text-lg font-semibold">
+              {summary?.enrollmentKnown
+                ? summary.enrolled
+                : (summary?.approved ?? 0)}
+            </span>
+            <span className="text-[11px]">
+              {summary?.enrollmentKnown ? "inscriptos" : "aprobaron"}
+            </span>
+            {summary?.enrollmentKnown && (
+              <span className="text-[10px] opacity-80">
+                {summary.approved} aprobaron
+              </span>
+            )}
           </button>
         );
       })}
@@ -359,11 +412,11 @@ function CohortRow({
   );
 }
 
-function GraduateRow({
+function StudentRow({
   record,
   approvedModules,
 }: {
-  record: GraduateRecord;
+  record: StudentModuleRecord;
   approvedModules: number;
 }) {
   return (
@@ -375,7 +428,7 @@ function GraduateRow({
         <p className="text-xs text-[#aab4c0]">{record.gender}</p>
       </td>
       <td className="px-4 py-3 font-medium text-[#fbf7ef]">
-        {formatDni(record.dni)}
+        {record.dni ? formatDni(record.dni) : "Sin dato"}
       </td>
       <td className="px-4 py-3">Cohorte {record.cohort}</td>
       <td className="px-4 py-3">
@@ -390,6 +443,17 @@ function GraduateRow({
           {record.email}
         </a>
         <p className="text-xs text-[#aab4c0]">{record.phone}</p>
+      </td>
+      <td className="px-4 py-3">
+        <span
+          className={
+            record.approved
+              ? "inline-flex h-8 items-center rounded-full bg-[#123a36] px-3 text-xs font-semibold text-[#9ff0db]"
+              : "inline-flex h-8 items-center rounded-full bg-[#3b2528] px-3 text-xs font-semibold text-[#ffb4ad]"
+          }
+        >
+          {record.approved ? "Aprobó" : "No aprobó"}
+        </span>
       </td>
       <td className="px-4 py-3">
         <span className="inline-flex h-8 items-center rounded-full bg-[#20262e] px-3 text-xs font-semibold text-[#b7c0cb]">

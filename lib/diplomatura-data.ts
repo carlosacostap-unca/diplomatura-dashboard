@@ -4,8 +4,9 @@ import path from "node:path";
 export type CohortId = 1 | 2 | 3 | 4 | 5 | 6;
 export type ModuleId = 1 | 2 | 3 | 4;
 
-export type GraduateRecord = {
+export type StudentModuleRecord = {
   id: string;
+  studentId: string;
   cohort: CohortId;
   module: ModuleId;
   moduleName: string;
@@ -17,20 +18,24 @@ export type GraduateRecord = {
   gender: string;
   phone: string;
   email: string;
+  approved: boolean;
+  enrollmentKnown: boolean;
   sourceFile: string;
 };
 
 export type ModuleSummary = {
   cohort: CohortId;
   module: ModuleId;
-  count: number;
-  sourceFile?: string;
+  enrolled: number;
+  approved: number;
+  notApproved: number;
+  enrollmentKnown: boolean;
 };
 
 export type DashboardData = {
   cohorts: CohortId[];
   modules: { id: ModuleId; name: string; shortName: string }[];
-  records: GraduateRecord[];
+  records: StudentModuleRecord[];
   moduleSummaries: ModuleSummary[];
 };
 
@@ -50,26 +55,21 @@ export const modules: DashboardData["modules"] = [
 ];
 
 const csvSources: CsvSource[] = [
-  {
-    cohort: 1,
-    module: 1,
-    fileName: "cohorte-1-modulo-1-diseno-web.csv",
-  },
+  { cohort: 1, module: 1, fileName: "cohorte-1-modulo-1-diseno-web.csv" },
   {
     cohort: 1,
     module: 2,
     fileName: "cohorte-1-modulo-2-programacion-javascript.csv",
   },
-  {
-    cohort: 1,
-    module: 3,
-    fileName: "cohorte-1-modulo-3-backend-node.csv",
-  },
+  { cohort: 1, module: 3, fileName: "cohorte-1-modulo-3-backend-node.csv" },
 ];
 
 const dataDirectory = path.join(process.cwd(), "data", "graduados");
-const defaultPocketBaseUrl = "https://pocketbase-dashboard-diplomatura.epixum.com";
+const enrollmentDataDirectory = path.join(process.cwd(), "data", "inscriptos");
+const defaultPocketBaseUrl =
+  "https://pocketbase-dashboard-diplomatura.epixum.com";
 const graduationsCollection = "student_module_graduations";
+const enrollmentsCollection = "student_module_enrollments";
 
 type PocketBaseStudentRecord = {
   id: string;
@@ -90,7 +90,7 @@ type PocketBaseModuleRecord = {
   shortName: string;
 };
 
-type PocketBaseGraduationRecord = {
+type PocketBaseAcademicRecord = {
   id: string;
   cohort: number;
   sourceFile: string;
@@ -102,76 +102,68 @@ type PocketBaseGraduationRecord = {
 
 export async function getDashboardData(): Promise<DashboardData> {
   const records = await readPocketBaseRecords().catch((error) => {
-    console.error("Falling back to CSV graduate data", error);
-    return readCsvRecords();
+    console.error("Falling back to local academic data", error);
+    return readLocalRecords();
   });
-  const moduleSummaries = buildModuleSummaries(records);
 
   return {
     cohorts,
     modules,
     records,
-    moduleSummaries,
+    moduleSummaries: buildModuleSummaries(records),
   };
 }
 
-function readCsvRecords(): GraduateRecord[] {
-  const records = csvSources.flatMap((source) => readSource(source));
+async function readPocketBaseRecords(): Promise<StudentModuleRecord[]> {
+  const pocketBaseUrl = (
+    process.env.NEXT_PUBLIC_POCKETBASE_URL ?? defaultPocketBaseUrl
+  ).replace(/\/$/, "");
+  const [graduations, enrollments] = await Promise.all([
+    readPocketBaseCollection(pocketBaseUrl, graduationsCollection),
+    readPocketBaseCollection(pocketBaseUrl, enrollmentsCollection),
+  ]);
+  const graduationKeys = new Set(
+    graduations.map((record) => relationKey(record)),
+  );
+  const enrollmentKeys = new Set(
+    enrollments.map((record) => relationKey(record)),
+  );
+  const records = enrollments.map((record) =>
+    mapPocketBaseRecord(record, graduationKeys.has(relationKey(record)), true),
+  );
+
+  records.push(
+    ...graduations
+      .filter((record) => !enrollmentKeys.has(relationKey(record)))
+      .map((record) => mapPocketBaseRecord(record, true, false)),
+  );
 
   return records;
 }
 
-async function readPocketBaseRecords(): Promise<GraduateRecord[]> {
-  const pocketBaseUrl = (
-    process.env.NEXT_PUBLIC_POCKETBASE_URL ?? defaultPocketBaseUrl
-  ).replace(/\/$/, "");
-
-  const records: GraduateRecord[] = [];
+async function readPocketBaseCollection(
+  pocketBaseUrl: string,
+  collection: string,
+): Promise<PocketBaseAcademicRecord[]> {
+  const records: PocketBaseAcademicRecord[] = [];
   let page = 1;
   let totalPages = 1;
 
   while (page <= totalPages) {
     const response = await fetch(
-      `${pocketBaseUrl}/api/collections/${graduationsCollection}/records?page=${page}&perPage=500&sort=cohort&expand=student,module`,
+      `${pocketBaseUrl}/api/collections/${collection}/records?page=${page}&perPage=500&sort=cohort&expand=student,module`,
       { cache: "no-store" },
     );
 
     if (!response.ok) {
-      throw new Error(`PocketBase read failed: ${response.status}`);
+      throw new Error(`PocketBase ${collection} read failed: ${response.status}`);
     }
 
     const payload = (await response.json()) as {
-      items: PocketBaseGraduationRecord[];
+      items: PocketBaseAcademicRecord[];
       totalPages: number;
     };
-
-    records.push(
-      ...payload.items.map((record) => {
-        const student = record.expand?.student;
-        const moduleItem = record.expand?.module;
-
-        if (!student || !moduleItem) {
-          throw new Error("PocketBase relation expand is incomplete");
-        }
-
-        return {
-          id: record.id,
-          cohort: toCohortId(record.cohort),
-          module: toModuleId(moduleItem.number),
-          moduleName: moduleItem.name,
-          lastName: student.lastName,
-          firstName: student.firstName,
-          fullName: student.fullName,
-          dni: student.dni,
-          birthDate: student.birthDate,
-          gender: student.gender,
-          phone: student.phone,
-          email: student.email,
-          sourceFile: record.sourceFile,
-        };
-      }),
-    );
-
+    records.push(...payload.items);
     totalPages = payload.totalPages;
     page += 1;
   }
@@ -179,7 +171,72 @@ async function readPocketBaseRecords(): Promise<GraduateRecord[]> {
   return records;
 }
 
-function readSource(source: CsvSource): GraduateRecord[] {
+function mapPocketBaseRecord(
+  record: PocketBaseAcademicRecord,
+  approved: boolean,
+  enrollmentKnown: boolean,
+): StudentModuleRecord {
+  const student = record.expand?.student;
+  const moduleItem = record.expand?.module;
+
+  if (!student || !moduleItem) {
+    throw new Error("PocketBase relation expand is incomplete");
+  }
+
+  return {
+    id: `${record.id}-${enrollmentKnown ? "enrollment" : "graduation"}`,
+    studentId: student.id,
+    cohort: toCohortId(record.cohort),
+    module: toModuleId(moduleItem.number),
+    moduleName: moduleItem.name,
+    lastName: student.lastName,
+    firstName: student.firstName,
+    fullName: student.fullName,
+    dni: student.dni,
+    birthDate: student.birthDate,
+    gender: student.gender,
+    phone: student.phone,
+    email: student.email,
+    approved,
+    enrollmentKnown,
+    sourceFile: record.sourceFile,
+  };
+}
+
+function relationKey(record: PocketBaseAcademicRecord): string {
+  const student = record.expand?.student;
+  const moduleItem = record.expand?.module;
+
+  if (!student || !moduleItem) {
+    throw new Error("PocketBase relation expand is incomplete");
+  }
+
+  return `${student.id}-${record.cohort}-${moduleItem.number}`;
+}
+
+function readLocalRecords(): StudentModuleRecord[] {
+  const graduates = csvSources.flatMap((source) => readGraduateSource(source));
+  const enrollmentPath = path.join(
+    enrollmentDataDirectory,
+    "cohorte-1-modulo-1-diseno-web.csv",
+  );
+  const enrollments = readEnrollmentSource(enrollmentPath, graduates);
+  const enrollmentGraduateIds = new Set(
+    enrollments.filter((record) => record.approved).map((record) => record.studentId),
+  );
+
+  return [
+    ...enrollments,
+    ...graduates.filter(
+      (record) =>
+        record.cohort !== 1 ||
+        record.module !== 1 ||
+        !enrollmentGraduateIds.has(record.studentId),
+    ),
+  ];
+}
+
+function readGraduateSource(source: CsvSource): StudentModuleRecord[] {
   const filePath = path.join(dataDirectory, source.fileName);
   const csv = readFileSync(filePath, "utf8");
   const moduleName =
@@ -191,7 +248,8 @@ function readSource(source: CsvSource): GraduateRecord[] {
     const dni = normalizeDni(row.DNI);
 
     return {
-      id: `${source.cohort}-${source.module}-${dni || index}`,
+      id: `graduation-${source.cohort}-${source.module}-${dni || index}`,
+      studentId: `dni:${dni || `${source.cohort}-${source.module}-${index}`}`,
       cohort: source.cohort,
       module: source.module,
       moduleName,
@@ -203,34 +261,89 @@ function readSource(source: CsvSource): GraduateRecord[] {
         getCell(row, ["Fecha de nacimiento", "Fecha de Nacimiento"]),
       ),
       gender: cleanCell(getCell(row, ["Género"])),
-      phone: cleanCell(getCell(row, ["Número de teléfono", "Teléfono"])),
-      email: cleanCell(getCell(row, ["E-mail", "Correo electrónico"])).toLowerCase(),
+      phone: normalizePhone(
+        getCell(row, ["Número de teléfono", "Teléfono"]),
+      ),
+      email: cleanCell(
+        getCell(row, ["E-mail", "Correo electrónico"]),
+      ).toLowerCase(),
+      approved: true,
+      enrollmentKnown: false,
       sourceFile: source.fileName,
     };
   });
 }
 
-function buildModuleSummaries(records: GraduateRecord[]): ModuleSummary[] {
-  const counts = new Map<string, ModuleSummary>();
+function readEnrollmentSource(
+  filePath: string,
+  graduates: StudentModuleRecord[],
+): StudentModuleRecord[] {
+  const rows = parseCsv(readFileSync(filePath, "utf8"));
+  const cohortGraduates = graduates.filter(
+    (record) => record.cohort === 1 && record.module === 1,
+  );
+  const byEmail = new Map(cohortGraduates.map((record) => [record.email, record]));
+  const byPhoneAndName = new Map(
+    cohortGraduates.map((record) => [
+      `${record.phone}|${normalizeName(record.lastName, record.firstName)}`,
+      record,
+    ]),
+  );
+
+  return rows.map((row, index) => {
+    const lastName = cleanCell(row["Apellido/s"]);
+    const firstName = cleanCell(row["Nombre/s"]);
+    const email = cleanCell(row["Correo electrónico"]).toLowerCase();
+    const phone = normalizePhone(row["Teléfono"]);
+    const graduate =
+      byEmail.get(email) ??
+      byPhoneAndName.get(`${phone}|${normalizeName(lastName, firstName)}`);
+
+    return {
+      id: `enrollment-1-1-${index}`,
+      studentId: graduate?.studentId ?? `email:${email}`,
+      cohort: 1,
+      module: 1,
+      moduleName: modules[0].name,
+      lastName: graduate?.lastName ?? lastName,
+      firstName: graduate?.firstName ?? firstName,
+      fullName: graduate?.fullName ?? `${lastName}, ${firstName}`,
+      dni: graduate?.dni ?? "",
+      birthDate: graduate?.birthDate ?? "",
+      gender: graduate?.gender ?? "",
+      phone: graduate?.phone ?? phone,
+      email: graduate?.email ?? email,
+      approved: Boolean(graduate),
+      enrollmentKnown: true,
+      sourceFile: path.basename(filePath),
+    };
+  });
+}
+
+function buildModuleSummaries(
+  records: StudentModuleRecord[],
+): ModuleSummary[] {
+  const summaries = new Map<string, ModuleSummary>();
 
   for (const record of records) {
     const key = `${record.cohort}-${record.module}`;
-    const summary = counts.get(key);
-
-    if (summary) {
-      summary.count += 1;
-      continue;
-    }
-
-    counts.set(key, {
+    const summary = summaries.get(key) ?? {
       cohort: record.cohort,
       module: record.module,
-      count: 1,
-      sourceFile: record.sourceFile,
-    });
+      enrolled: 0,
+      approved: 0,
+      notApproved: 0,
+      enrollmentKnown: false,
+    };
+
+    summary.enrolled += 1;
+    summary.approved += record.approved ? 1 : 0;
+    summary.notApproved += record.approved ? 0 : 1;
+    summary.enrollmentKnown ||= record.enrollmentKnown;
+    summaries.set(key, summary);
   }
 
-  return counts.values().toArray();
+  return Array.from(summaries.values());
 }
 
 function parseCsv(csv: string): Record<string, string>[] {
@@ -238,13 +351,11 @@ function parseCsv(csv: string): Record<string, string>[] {
     .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
     .filter((line) => line.trim().length > 0);
-
   const [headerLine, ...dataLines] = lines;
   const headers = splitCsvLine(headerLine).map(cleanCell);
 
   return dataLines.map((line) => {
     const values = splitCsvLine(line);
-
     return headers.reduce<Record<string, string>>((row, header, index) => {
       row[header] = values[index] ?? "";
       return row;
@@ -264,21 +375,14 @@ function splitCsvLine(line: string): string[] {
     if (char === '"' && nextChar === '"') {
       current += '"';
       index += 1;
-      continue;
-    }
-
-    if (char === '"') {
+    } else if (char === '"') {
       inQuotes = !inQuotes;
-      continue;
-    }
-
-    if (char === "," && !inQuotes) {
+    } else if (char === "," && !inQuotes) {
       values.push(current);
       current = "";
-      continue;
+    } else {
+      current += char;
     }
-
-    current += char;
   }
 
   values.push(current);
@@ -295,12 +399,24 @@ function getCell(row: Record<string, string>, names: string[]): string {
       return row[name];
     }
   }
-
   return "";
 }
 
 function normalizeDni(value = ""): string {
   return cleanCell(value).replace(/\D/g, "");
+}
+
+function normalizePhone(value = ""): string {
+  return cleanCell(value).replace(/\D/g, "");
+}
+
+function normalizeName(lastName: string, firstName: string): string {
+  return `${lastName} ${firstName}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function toCohortId(value: number): CohortId {

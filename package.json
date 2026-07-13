@@ -11,7 +11,9 @@
     "start": "next start",
     "lint": "eslint",
     "data:sync-pocketbase": "node scripts/sync-graduates-to-pocketbase.mjs --dry-run",
-    "data:sync-pocketbase:apply": "node scripts/sync-graduates-to-pocketbase.mjs --apply"
+    "data:sync-pocketbase:apply": "node scripts/sync-graduates-to-pocketbase.mjs --apply",
+    "data:sync-enrollments": "node scripts/sync-enrollments-to-pocketbase.mjs --dry-run",
+    "data:sync-enrollments:apply": "node scripts/sync-enrollments-to-pocketbase.mjs --apply"
   },
   "dependencies": {
     "next": "16.2.10",
