@@ -353,12 +353,24 @@ function reconcileRows(rows, students, approvedStudentIds, cohortStudentIds) {
       const key = rowShortNameKey(row);
       if (key) {
         match = uniqueMatch(
-          approvedByShortName.get(key),
+          (approvedByShortName.get(key) ?? []).filter((student) =>
+            matchesStructuredShortName(student, row),
+          ),
           row,
           "approved surname and first name",
         );
         if (match) matchedByShortName += 1;
       }
+    }
+    if (!match && !row.hasStructuredName) {
+      match = uniqueMatch(
+        approvedStudents.filter((student) =>
+          matchesAbbreviatedCombinedName(student, row.fullName),
+        ),
+        row,
+        "approved abbreviated name",
+      );
+      if (match) matchedByShortName += 1;
     }
     if (!match && row.phone) {
       match = uniqueMatch(approvedByPhone.get(row.phone), row, "approved phone");
@@ -392,13 +404,26 @@ function reconcileRows(rows, students, approvedStudentIds, cohortStudentIds) {
       const key = rowShortNameKey(row);
       if (key) {
         match = uniqueMatch(
-          byShortName.get(key),
+          (byShortName.get(key) ?? []).filter((student) =>
+            matchesStructuredShortName(student, row),
+          ),
           row,
           "surname and first name",
           cohortStudentIds,
         );
         if (match) matchedByShortName += 1;
       }
+    }
+    if (!match && !row.hasStructuredName) {
+      match = uniqueMatch(
+        students.filter((student) =>
+          matchesAbbreviatedCombinedName(student, row.fullName),
+        ),
+        row,
+        "abbreviated name",
+        cohortStudentIds,
+      );
+      if (match) matchedByShortName += 1;
     }
     if (!match && row.phone) {
       const candidates = (byPhone.get(row.phone) ?? []).filter(
@@ -947,6 +972,37 @@ function shortNameKey(lastName = "", firstName = "") {
   return normalizedLastName && firstGivenName
     ? `${normalizedLastName}|${firstGivenName}`
     : "";
+}
+
+function matchesAbbreviatedCombinedName(student, sourceName = "") {
+  const sourceTokens = normalizeText(sourceName).split(/\s+/).filter(Boolean);
+  if (sourceTokens.length < 2) return false;
+
+  const lastNameTokens = new Set(
+    normalizeText(student.lastName).split(/\s+/).filter(Boolean),
+  );
+  const firstNameTokens = new Set(
+    normalizeText(student.firstName).split(/\s+/).filter(Boolean),
+  );
+  const studentTokens = new Set([...lastNameTokens, ...firstNameTokens]);
+
+  return (
+    sourceTokens.every((token) => studentTokens.has(token)) &&
+    sourceTokens.some((token) => lastNameTokens.has(token)) &&
+    sourceTokens.some((token) => firstNameTokens.has(token))
+  );
+}
+
+function matchesStructuredShortName(student, row) {
+  if (!row.hasStructuredName) return true;
+
+  const sourceFirstNames = normalizeText(row.firstName).split(/\s+/).filter(Boolean);
+  if (sourceFirstNames.length < 2) return true;
+
+  const studentFirstNames = new Set(
+    normalizeText(student.firstName).split(/\s+/).filter(Boolean),
+  );
+  return sourceFirstNames.every((name) => studentFirstNames.has(name));
 }
 
 function normalizeText(value = "") {
