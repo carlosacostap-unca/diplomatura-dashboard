@@ -221,19 +221,61 @@ function readLocalRecords(): StudentModuleRecord[] {
     "cohorte-1-modulo-1-diseno-web.csv",
   );
   const enrollments = readEnrollmentSource(enrollmentPath, graduates);
-  const enrollmentGraduateIds = new Set(
-    enrollments.filter((record) => record.approved).map((record) => record.studentId),
+  const derivedModuleTwoEnrollments = deriveNextModuleEnrollments(
+    graduates,
+    1,
+    1,
+    2,
+  );
+  const coveredRelations = new Set(
+    [...enrollments, ...derivedModuleTwoEnrollments].map(
+      (record) => `${record.studentId}-${record.cohort}-${record.module}`,
+    ),
   );
 
   return [
     ...enrollments,
+    ...derivedModuleTwoEnrollments,
     ...graduates.filter(
       (record) =>
-        record.cohort !== 1 ||
-        record.module !== 1 ||
-        !enrollmentGraduateIds.has(record.studentId),
+        !coveredRelations.has(
+          `${record.studentId}-${record.cohort}-${record.module}`,
+        ),
     ),
   ];
+}
+
+function deriveNextModuleEnrollments(
+  graduates: StudentModuleRecord[],
+  cohort: CohortId,
+  sourceModule: ModuleId,
+  targetModule: ModuleId,
+): StudentModuleRecord[] {
+  const targetApprovedStudentIds = new Set(
+    graduates
+      .filter(
+        (record) =>
+          record.cohort === cohort && record.module === targetModule,
+      )
+      .map((record) => record.studentId),
+  );
+  const targetModuleName =
+    modules.find((moduleItem) => moduleItem.id === targetModule)?.name ?? "";
+
+  return graduates
+    .filter(
+      (record) =>
+        record.cohort === cohort && record.module === sourceModule,
+    )
+    .map((record) => ({
+      ...record,
+      id: `derived-enrollment-${cohort}-${targetModule}-${record.studentId}`,
+      module: targetModule,
+      moduleName: targetModuleName,
+      approved: targetApprovedStudentIds.has(record.studentId),
+      enrollmentKnown: true,
+      sourceFile: `derived:cohort-${cohort}-module-${sourceModule}-graduates`,
+    }));
 }
 
 function readGraduateSource(source: CsvSource): StudentModuleRecord[] {
