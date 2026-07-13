@@ -168,6 +168,12 @@ async function main() {
             ...deduplication.duplicates,
           ],
           withoutDni: sourceRows.filter((row) => !row.dni).length,
+          invalidEmails: sourceRows
+            .filter((row) => row.invalidEmail)
+            .map((row) => ({
+              student: row.fullName,
+              value: row.invalidEmail,
+            })),
         },
         target: { cohort: options.cohort, module: options.module },
         reconciliation: {
@@ -251,16 +257,18 @@ function readCsvRecords(filePath) {
     .split(/\r?\n/)
     .filter((line) => line.trim());
   const headers = splitCsvLine(lines.shift()).map(normalizeHeader);
+  const unnamedColumn = headers.findIndex((header) => !header);
   const columns = {
-    combinedName: findColumn(headers, [
-      "alumnos",
-      "nombre/s y apellidos",
-      "nombre y apellido",
-      "nombre completo",
-    ]),
+    combinedName:
+      findColumn(headers, [
+        "alumnos",
+        "nombre/s y apellidos",
+        "nombre y apellido",
+        "nombre completo",
+      ]) ?? (unnamedColumn >= 0 ? unnamedColumn : null),
     lastName: findColumn(headers, ["apellido/s", "apellido", "apellidos"]),
     firstName: findColumn(headers, ["nombre/s", "nombre", "nombres"]),
-    dni: findColumn(headers, ["dni", "documento"]),
+    dni: findColumn(headers, ["dni", "dni/pasaporte", "documento"]),
     email: findColumn(headers, ["e-mail", "email", "correo electronico"]),
     phone: findColumn(headers, ["telefono", "numero de telefono"]),
   };
@@ -280,6 +288,7 @@ function readCsvRecords(filePath) {
       columns.combinedName == null
         ? ""
         : cleanCell(readColumn(values, columns.combinedName));
+    const sourceEmail = normalizeEmail(readColumn(values, columns.email));
     const hasStructuredName = Boolean(lastName || firstName);
     return {
       index,
@@ -290,7 +299,8 @@ function readCsvRecords(filePath) {
         : combinedName,
       hasStructuredName,
       dni: normalizeDni(readColumn(values, columns.dni)),
-      email: normalizeEmail(readColumn(values, columns.email)),
+      email: isValidEmail(sourceEmail) ? sourceEmail : "",
+      invalidEmail: sourceEmail && !isValidEmail(sourceEmail) ? sourceEmail : "",
       phone: normalizePhone(readColumn(values, columns.phone)),
     };
   });
@@ -478,11 +488,24 @@ function deduplicateRowsByKey(rows, getKey, reason) {
     );
     const dniValues = new Set(matchedRows.map((row) => row.dni).filter(Boolean));
     if (names.size > 1 || dniValues.size > 1) {
-      throw new Error(
-        `Conflicting rows share ${reason} ${key}: ${matchedRows
-          .map((row) => row.fullName)
-          .join(" | ")}`,
-      );
+      const hasSameCompleteDni =
+        reason === "email" &&
+        matchedRows.every((row) => row.dni) &&
+        dniValues.size === 1;
+      const hasDistinctCompleteDnis =
+        reason === "email" &&
+        matchedRows.every((row) => row.dni) &&
+        dniValues.size === matchedRows.length;
+      if (hasDistinctCompleteDnis) {
+        continue;
+      }
+      if (!hasSameCompleteDni) {
+        throw new Error(
+          `Conflicting rows share ${reason} ${key}: ${matchedRows
+            .map((row) => row.fullName)
+            .join(" | ")}`,
+        );
+      }
     }
 
     const preferredRow = [...matchedRows].sort(
@@ -506,9 +529,17 @@ function deduplicateRowsByKey(rows, getKey, reason) {
 }
 
 function sourceRowScore(row) {
-  return [row.dni, row.email, row.phone, row.lastName, row.firstName].filter(
-    Boolean,
-  ).length;
+  const identifierScore = [
+    row.dni,
+    row.email,
+    row.phone,
+    row.lastName,
+    row.firstName,
+  ].filter(Boolean).length;
+  const nameDetailScore = normalizePersonName(row.fullName)
+    .split(/\s+/)
+    .filter(Boolean).length;
+  return identifierScore * 100 + nameDetailScore;
 }
 
 function deduplicateMatchedRows(rows, studentByRow) {
@@ -1019,6 +1050,10 @@ function normalizeDni(value = "") {
 
 function normalizeEmail(value = "") {
   return cleanCell(value).toLowerCase();
+}
+
+function isValidEmail(value = "") {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function normalizePhone(value = "") {
