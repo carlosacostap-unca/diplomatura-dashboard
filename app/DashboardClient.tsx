@@ -364,6 +364,12 @@ export default function DashboardClient({ data }: DashboardClientProps) {
               >
                 Estudiantes
               </Link>
+              <Link
+                href="/calidad-datos"
+                className="rounded-md px-3 py-2 font-medium text-[#aab4c0] transition hover:bg-[#20262e] hover:text-[#fbf7ef]"
+              >
+                Calidad de datos
+              </Link>
             </nav>
             <div>
               <p className="text-sm font-semibold uppercase text-[#5ee0c1]">

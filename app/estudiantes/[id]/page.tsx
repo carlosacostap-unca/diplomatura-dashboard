@@ -39,6 +39,13 @@ export default async function StudentDetailPage({
           >
             Estudiantes
           </Link>
+          <span className="text-[#55606d]">/</span>
+          <Link
+            href="/calidad-datos"
+            className="rounded-md px-3 py-2 font-medium text-[#aab4c0] transition hover:bg-[#20262e] hover:text-[#fbf7ef]"
+          >
+            Calidad de datos
+          </Link>
           <span className="hidden text-[#55606d] sm:inline">/</span>
           <span className="hidden truncate text-[#dfe5eb] sm:inline">
             {student.firstName} {student.lastName}

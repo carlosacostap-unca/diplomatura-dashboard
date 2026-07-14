@@ -71,6 +71,12 @@ export default function StudentsClient({ students }: StudentsClientProps) {
             <span className="rounded-md bg-[#143c36] px-3 py-2 font-semibold text-[#9ff0db]">
               Estudiantes
             </span>
+            <Link
+              href="/calidad-datos"
+              className="rounded-md px-3 py-2 font-medium text-[#aab4c0] transition hover:bg-[#20262e] hover:text-[#fbf7ef]"
+            >
+              Calidad de datos
+            </Link>
           </nav>
 
           <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">

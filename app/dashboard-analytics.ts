@@ -43,6 +43,8 @@ export type DataQualityIssue = {
   studentName: string;
   title: string;
   detail: string;
+  cohort?: CohortId;
+  module?: ModuleId;
 };
 
 export type DashboardAnalytics = {
@@ -173,6 +175,8 @@ function buildDataQualityIssues(
         studentName: record.fullName,
         title: "Inscripcion sin clasificar",
         detail: `Cohorte ${record.cohort}, modulo ${record.module}`,
+        cohort: record.cohort,
+        module: record.module,
       });
     }
 
@@ -184,6 +188,8 @@ function buildDataQualityIssues(
         studentName: record.fullName,
         title: "Aprobacion sin inscripcion registrada",
         detail: `Cohorte ${record.cohort}, modulo ${record.module}`,
+        cohort: record.cohort,
+        module: record.module,
       });
     }
   }
